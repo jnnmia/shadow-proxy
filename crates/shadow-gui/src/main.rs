@@ -78,6 +78,8 @@ enum IpcCommand {
     ClearSessions,
     #[serde(rename = "ping_upstream")]
     PingUpstream { proxy: String },
+    #[serde(rename = "window_ready")]
+    WindowReady,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -786,7 +788,92 @@ fn resolve_hook_dll(arch: Architecture) -> anyhow::Result<PathBuf> {
     anyhow::bail!("未找到适用于 {:?} 架构的 Hook 动态库", arch)
 }
 
-fn main() -> anyhow::Result<()> {
+fn show_win32_error_box(title: &str, msg: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+    let title_w: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    let msg_w: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        MessageBoxW(0 as _, msg_w.as_ptr(), title_w.as_ptr(), MB_OK | MB_ICONERROR);
+    }
+}
+
+fn main() {
+    if let Err(e) = run_app() {
+        let err_text = format!("{:#}", e);
+        show_win32_error_box("ShadowProxy 启动失败", &err_text);
+        if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+            let log_dir = Path::new(&appdata).join("ShadowProxy");
+            let _ = std::fs::create_dir_all(&log_dir);
+            let _ = std::fs::write(log_dir.join("launch_error.log"), &err_text);
+        }
+        std::process::exit(1);
+    }
+}
+
+fn run_app() -> anyhow::Result<()> {
+    let log_step = |step: &str| {
+        if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+            let log_dir = Path::new(&appdata).join("ShadowProxy");
+            let _ = std::fs::create_dir_all(&log_dir);
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_dir.join("startup.log")) {
+                let _ = writeln!(f, "[PID {}] {}", std::process::id(), step);
+            }
+        }
+    };
+
+    log_step("1. run_app started");
+
+    // 注册全局 Panic 钩子，发生未捕获 Panic 时写入崩溃日志并弹出 Windows 错误对话框，杜绝无感静默闪退
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("ShadowProxy 发生未捕获异常:\n{}", info);
+        if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+            let log_dir = Path::new(&appdata).join("ShadowProxy");
+            let _ = std::fs::create_dir_all(&log_dir);
+            let _ = std::fs::write(log_dir.join("crash.log"), &msg);
+        }
+        show_win32_error_box("ShadowProxy 致命异常", &msg);
+    }));
+
+    // 单实例与僵尸进程自愈守护：
+    // 1. 检查是否存在已有窗口
+    let title_w: Vec<u16> = "ShadowProxy - 极简透明代理控制台\0".encode_utf16().collect();
+    let existing_hwnd = unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(std::ptr::null(), title_w.as_ptr())
+    };
+    if !existing_hwnd.is_null() {
+        log_step("2. Existing window found, activating");
+        unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SetForegroundWindow, SW_RESTORE};
+            ShowWindow(existing_hwnd, SW_RESTORE);
+            SetForegroundWindow(existing_hwnd);
+        }
+        return Ok(());
+    }
+
+    // 2. 若无可见窗口但存在残留僵尸进程，彻底终止以释放 WebView2 用户目录锁
+    let my_pid = std::process::id();
+    let existing_pids = find_existing_pids_by_name("shadow-gui.exe");
+    let mut killed_any = false;
+    for pid in existing_pids {
+        if pid != my_pid {
+            log_step(&format!("3. Terminating zombie process PID {}", pid));
+            unsafe {
+                use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+                use windows_sys::Win32::Foundation::CloseHandle;
+                let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
+                if !h.is_null() {
+                    let _ = TerminateProcess(h, 1);
+                    CloseHandle(h);
+                    killed_any = true;
+                }
+            }
+        }
+    }
+    if killed_any {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+
     // 性能优化：强制将 WebView2 用户数据与渲染缓存目录置于本地高速 SSD (%LOCALAPPDATA%)，
     // 彻底根除在网络共享盘 (SMB/局域网盘) 或外部存储运行时 Chromium 的网络 I/O 锁争用与启动极慢卡顿
     if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
@@ -795,11 +882,13 @@ fn main() -> anyhow::Result<()> {
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &webview_cache);
     }
 
+    log_step("4. Building EventLoop and Window");
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let window = WindowBuilder::new()
         .with_title("ShadowProxy - 极简透明代理控制台")
         .with_inner_size(LogicalSize::new(960.0, 680.0))
         .with_min_inner_size(LogicalSize::new(820.0, 520.0))
+        .with_visible(false)
         .build(&event_loop)?;
 
     let hwnd = window.hwnd() as windows_sys::Win32::Foundation::HWND;
@@ -820,22 +909,11 @@ fn main() -> anyhow::Result<()> {
     }
 
     let proxy = event_loop.create_proxy();
-
-    // 1 秒定时发送 Tick 维持流量与状态轮询
-    {
-        let proxy_tick = proxy.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_millis(1000));
-            if proxy_tick.send_event(UserEvent::Tick).is_err() {
-                break;
-            }
-        });
-    }
-
     let proxy_ipc = proxy.clone();
     let proxy_drop = proxy.clone();
 
     let builder = WebViewBuilder::new()
+        .with_background_color((9, 13, 20, 255))
         .with_html(include_str!("ui.html"))
         .with_ipc_handler(move |req| {
             let _ = proxy_ipc.send_event(UserEvent::Ipc(req.body().clone()));
@@ -849,8 +927,38 @@ fn main() -> anyhow::Result<()> {
             true
         });
 
-    let webview = builder.build(&window)?;
+    let webview = match builder.build(&window) {
+        Ok(w) => w,
+        Err(e) => {
+            let err_msg = format!("ShadowProxy 界面引擎 (WebView2) 启动失败:\n{}\n\n请确认系统已安装 Microsoft Edge WebView2 Runtime。", e);
+            show_win32_error_box("ShadowProxy 启动失败", &err_msg);
+            anyhow::bail!("{}", err_msg);
+        }
+    };
+    log_step("5. WebViewBuilder built successfully");
+
     let mut state = AppState::new()?;
+    log_step("6. AppState created, starting tick thread and event loop");
+
+    // 250ms 保底唤醒显示窗口（防止极端异常下未能触发 window_ready 导致窗口不可见）
+    {
+        let proxy_show = proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let _ = proxy_show.send_event(UserEvent::Ipc(r#"{"cmd":"window_ready"}"#.to_string()));
+        });
+    }
+
+    // 1 秒定时发送 Tick 维持流量与状态轮询（在确认 WebView2 与状态初始化成功后启动）
+    {
+        let proxy_tick = proxy.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            if proxy_tick.send_event(UserEvent::Tick).is_err() {
+                break;
+            }
+        });
+    }
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -1142,6 +1250,9 @@ fn main() -> anyhow::Result<()> {
                                     ));
                                 }
                             }
+                            IpcCommand::WindowReady => {
+                                window.set_visible(true);
+                            }
                         }
                     }
                 }
@@ -1160,6 +1271,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 *control_flow = ControlFlow::Exit;
+                std::process::exit(0);
             }
             _ => {}
         }

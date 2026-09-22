@@ -10,8 +10,9 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 use windows_sys::Win32::Foundation::{FARPROC, HMODULE};
 use windows_sys::Win32::Networking::WinSock::{
-    select, send, AF_INET, AF_INET6, FD_SET, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6, SOCKET,
-    SOCKET_ERROR, TIMEVAL, WSAECONNREFUSED, WSAEWOULDBLOCK, WSAGetLastError, WSASetLastError,
+    getpeername, getsockopt, send, AF_INET, AF_INET6, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6, SOCKET,
+    SOCKET_ERROR, SOCK_DGRAM, SOL_SOCKET, SO_TYPE, WSAECONNREFUSED, WSAEWOULDBLOCK,
+    WSAGetLastError, WSASetLastError,
 };
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 
@@ -20,6 +21,7 @@ pub static ORIG_WSACONNECT: AtomicUsize = AtomicUsize::new(0);
 pub static ORIG_GETADDRINFO: AtomicUsize = AtomicUsize::new(0);
 pub static ORIG_GETADDRINFOW: AtomicUsize = AtomicUsize::new(0);
 pub static ORIG_SENDTO: AtomicUsize = AtomicUsize::new(0);
+pub static ORIG_WSASENDTO: AtomicUsize = AtomicUsize::new(0);
 pub static ORIG_WSAIOCTL: AtomicUsize = AtomicUsize::new(0);
 pub static ORIG_CONNECTEX: AtomicUsize = AtomicUsize::new(0);
 pub static ORIG_WSASEND: AtomicUsize = AtomicUsize::new(0);
@@ -60,7 +62,7 @@ pub struct AddrInfoA {
     pub ai_next: *mut AddrInfoA,
 }
 
-pub unsafe fn build_hooks() -> [HookDef; 16] {
+pub unsafe fn build_hooks() -> [HookDef; 17] {
     [
         HookDef {
             dll_name: "ws2_32.dll",
@@ -96,6 +98,13 @@ pub unsafe fn build_hooks() -> [HookDef; 16] {
             ordinal: 20,
             hook_addr: hooked_sendto as *const () as usize,
             orig_addr: &ORIG_SENDTO,
+        },
+        HookDef {
+            dll_name: "ws2_32.dll",
+            func_name: "WSASendTo",
+            ordinal: 73,
+            hook_addr: hooked_wsasendto as *const () as usize,
+            orig_addr: &ORIG_WSASENDTO,
         },
         HookDef {
             dll_name: "ws2_32.dll",
@@ -257,20 +266,31 @@ pub struct WsaBuf {
     pub buf: *mut u8,
 }
 
-static PENDING_CONNECT_FRAMES: std::sync::Mutex<Option<std::collections::HashMap<SOCKET, Vec<u8>>>> =
+struct PendingFrame {
+    frame: Vec<u8>,
+    timestamp: std::time::Instant,
+}
+
+static PENDING_CONNECT_FRAMES: std::sync::Mutex<Option<std::collections::HashMap<SOCKET, PendingFrame>>> =
     std::sync::Mutex::new(None);
 
 fn store_pending_frame(s: SOCKET, frame: Vec<u8>) {
     if let Ok(mut guard) = PENDING_CONNECT_FRAMES.lock() {
         let map = guard.get_or_insert_with(std::collections::HashMap::new);
-        map.insert(s, frame);
+        let now = std::time::Instant::now();
+        map.retain(|_, v| now.duration_since(v.timestamp).as_secs() < 30);
+        map.insert(s, PendingFrame { frame, timestamp: now });
     }
 }
 
 fn take_pending_frame(s: SOCKET) -> Option<Vec<u8>> {
     if let Ok(mut guard) = PENDING_CONNECT_FRAMES.lock() {
         if let Some(map) = guard.as_mut() {
-            return map.remove(&s);
+            if let Some(entry) = map.remove(&s) {
+                if entry.timestamp.elapsed().as_secs() < 30 {
+                    return Some(entry.frame);
+                }
+            }
         }
     }
     None
@@ -282,6 +302,55 @@ fn remove_pending_frame(s: SOCKET) {
             map.remove(&s);
         }
     }
+}
+
+unsafe fn get_socket_type(s: SOCKET) -> Option<i32> {
+    let mut sock_type: i32 = 0;
+    let mut optlen = std::mem::size_of::<i32>() as i32;
+    let ret = getsockopt(
+        s,
+        SOL_SOCKET,
+        SO_TYPE,
+        &mut sock_type as *mut _ as *mut u8,
+        &mut optlen,
+    );
+    if ret == 0 {
+        Some(sock_type)
+    } else {
+        None
+    }
+}
+
+unsafe fn get_connected_peer_port(s: SOCKET) -> Option<u16> {
+    let mut buf = [0u8; 128];
+    let mut len = buf.len() as i32;
+    let ret = getpeername(s, buf.as_mut_ptr() as *mut SOCKADDR, &mut len);
+    if ret == 0 && len >= std::mem::size_of::<SOCKADDR>() as i32 {
+        let sa = buf.as_ptr() as *const SOCKADDR;
+        let family = (*sa).sa_family;
+        if family == AF_INET && len >= std::mem::size_of::<SOCKADDR_IN>() as i32 {
+            let sin = buf.as_ptr() as *const SOCKADDR_IN;
+            return Some(u16::from_be((*sin).sin_port));
+        } else if family == AF_INET6 && len >= std::mem::size_of::<SOCKADDR_IN6>() as i32 {
+            let sin6 = buf.as_ptr() as *const SOCKADDR_IN6;
+            return Some(u16::from_be((*sin6).sin6_port));
+        }
+    }
+    None
+}
+
+unsafe fn check_udp_security_block(port: u16) -> bool {
+    // 阻断 QUIC (UDP/443)
+    if port == 443 {
+        WSASetLastError(WSAECONNREFUSED);
+        return true;
+    }
+    // 严格防泄漏模式阻断 UDP/53 DNS
+    if port == 53 && STRICT_DNS.load(Ordering::Relaxed) {
+        WSASetLastError(WSAECONNREFUSED);
+        return true;
+    }
+    false
 }
 
 const SIO_GET_EXTENSION_FUNCTION_POINTER: u32 = 0xC8000006;
@@ -422,7 +491,31 @@ pub unsafe extern "system" fn hooked_connectex(
         );
     };
 
-    let frame = hook_target.encode();
+    let mut frame = hook_target.encode();
+    if !lp_send_buffer.is_null() && dw_send_data_length > 0 {
+        let initial_data = std::slice::from_raw_parts(lp_send_buffer as *const u8, dw_send_data_length as usize);
+        frame.extend_from_slice(initial_data);
+        if !lpdw_bytes_sent.is_null() {
+            *lpdw_bytes_sent = dw_send_data_length;
+        }
+        store_pending_frame(s, frame);
+
+        let mut relay_sin: SOCKADDR_IN = std::mem::zeroed();
+        relay_sin.sin_family = AF_INET;
+        relay_sin.sin_port = relay_port.to_be();
+        relay_sin.sin_addr.S_un.S_addr = u32::from_ne_bytes([127, 0, 0, 1]);
+
+        return orig_func(
+            s,
+            &relay_sin as *const _ as *const SOCKADDR,
+            std::mem::size_of::<SOCKADDR_IN>() as i32,
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            lp_overlapped,
+        );
+    }
+
     store_pending_frame(s, frame);
 
     let mut relay_sin: SOCKADDR_IN = std::mem::zeroed();
@@ -522,6 +615,29 @@ pub unsafe extern "system" fn hooked_connect(
         std::mem::transmute(orig_fn);
 
     let family = (*name).sa_family;
+
+    // 针对 UDP 套接字调用 connect 的情况处理 (SOCK_DGRAM)
+    if let Some(sock_type) = get_socket_type(s) {
+        if sock_type == SOCK_DGRAM {
+            let target_port = if family == AF_INET && namelen >= std::mem::size_of::<SOCKADDR_IN>() as i32 {
+                let sin = &*(name as *const SOCKADDR_IN);
+                Some(u16::from_be(sin.sin_port))
+            } else if family == AF_INET6 && namelen >= std::mem::size_of::<SOCKADDR_IN6>() as i32 {
+                let sin6 = &*(name as *const SOCKADDR_IN6);
+                Some(u16::from_be(sin6.sin6_port))
+            } else {
+                None
+            };
+            if let Some(port) = target_port {
+                if check_udp_security_block(port) {
+                    return SOCKET_ERROR;
+                }
+            }
+            // 普通 UDP 连接放行至操作系统原始接口，严禁重定向至 TCP 中继端口
+            return orig_func(s, name, namelen);
+        }
+    }
+
     let relay_port = RELAY_PORT.load(Ordering::Relaxed);
 
     let hook_target = if family == AF_INET {
@@ -556,11 +672,16 @@ pub unsafe extern "system" fn hooked_connect(
         return orig_func(s, name, namelen);
     };
 
+    // 清除该套接字句柄可能残留的历史暂存帧，防止句柄复用引发串线
+    remove_pending_frame(s);
+
     // 组装本地透明中继地址 127.0.0.1:<relay_port>
     let mut relay_sin: SOCKADDR_IN = std::mem::zeroed();
     relay_sin.sin_family = AF_INET;
     relay_sin.sin_port = relay_port.to_be();
     relay_sin.sin_addr.S_un.S_addr = u32::from_ne_bytes([127, 0, 0, 1]);
+
+    let frame = hook_target.encode();
 
     let connect_res = orig_func(
         s,
@@ -569,33 +690,21 @@ pub unsafe extern "system" fn hooked_connect(
     );
 
     if connect_res == 0 {
-        let frame = hook_target.encode();
         let sent = send(s, frame.as_ptr(), frame.len() as i32, 0);
         if sent != frame.len() as i32 {
-            return SOCKET_ERROR;
+            let remaining = if sent > 0 && (sent as usize) < frame.len() {
+                frame[sent as usize..].to_vec()
+            } else {
+                frame
+            };
+            store_pending_frame(s, remaining);
         }
         0
     } else {
         let err = WSAGetLastError();
         if err == WSAEWOULDBLOCK {
-            let mut write_fds: FD_SET = std::mem::zeroed();
-            write_fds.fd_count = 1;
-            write_fds.fd_array[0] = s;
-            let timeout = TIMEVAL {
-                tv_sec: 2,
-                tv_usec: 0,
-            };
-            let sel = select(
-                0,
-                std::ptr::null_mut(),
-                &mut write_fds,
-                std::ptr::null_mut(),
-                &timeout,
-            );
-            if sel > 0 {
-                let frame = hook_target.encode();
-                send(s, frame.as_ptr(), frame.len() as i32, 0);
-            }
+            // 非阻塞套接字连接进行中：严禁同步阻塞 select，立即暂存握手帧
+            store_pending_frame(s, frame);
         }
         WSASetLastError(err);
         connect_res
@@ -639,6 +748,28 @@ pub unsafe extern "system" fn hooked_wsaconnect(
     ) -> i32 = std::mem::transmute(orig_fn);
 
     let family = (*name).sa_family;
+
+    // 针对 UDP 套接字调用 WSAConnect 的情况处理 (SOCK_DGRAM)
+    if let Some(sock_type) = get_socket_type(s) {
+        if sock_type == SOCK_DGRAM {
+            let target_port = if family == AF_INET && namelen >= std::mem::size_of::<SOCKADDR_IN>() as i32 {
+                let sin = &*(name as *const SOCKADDR_IN);
+                Some(u16::from_be(sin.sin_port))
+            } else if family == AF_INET6 && namelen >= std::mem::size_of::<SOCKADDR_IN6>() as i32 {
+                let sin6 = &*(name as *const SOCKADDR_IN6);
+                Some(u16::from_be(sin6.sin6_port))
+            } else {
+                None
+            };
+            if let Some(port) = target_port {
+                if check_udp_security_block(port) {
+                    return SOCKET_ERROR;
+                }
+            }
+            return orig_func(s, name, namelen, caller_data, callee_data, sqos, gqos);
+        }
+    }
+
     let relay_port = RELAY_PORT.load(Ordering::Relaxed);
 
     let hook_target = if family == AF_INET {
@@ -672,10 +803,14 @@ pub unsafe extern "system" fn hooked_wsaconnect(
         return orig_func(s, name, namelen, caller_data, callee_data, sqos, gqos);
     };
 
+    remove_pending_frame(s);
+
     let mut relay_sin: SOCKADDR_IN = std::mem::zeroed();
     relay_sin.sin_family = AF_INET;
     relay_sin.sin_port = relay_port.to_be();
     relay_sin.sin_addr.S_un.S_addr = u32::from_ne_bytes([127, 0, 0, 1]);
+
+    let frame = hook_target.encode();
 
     let connect_res = orig_func(
         s,
@@ -688,33 +823,20 @@ pub unsafe extern "system" fn hooked_wsaconnect(
     );
 
     if connect_res == 0 {
-        let frame = hook_target.encode();
         let sent = send(s, frame.as_ptr(), frame.len() as i32, 0);
         if sent != frame.len() as i32 {
-            return SOCKET_ERROR;
+            let remaining = if sent > 0 && (sent as usize) < frame.len() {
+                frame[sent as usize..].to_vec()
+            } else {
+                frame
+            };
+            store_pending_frame(s, remaining);
         }
         0
     } else {
         let err = WSAGetLastError();
         if err == WSAEWOULDBLOCK {
-            let mut write_fds: FD_SET = std::mem::zeroed();
-            write_fds.fd_count = 1;
-            write_fds.fd_array[0] = s;
-            let timeout = TIMEVAL {
-                tv_sec: 2,
-                tv_usec: 0,
-            };
-            let sel = select(
-                0,
-                std::ptr::null_mut(),
-                &mut write_fds,
-                std::ptr::null_mut(),
-                &timeout,
-            );
-            if sel > 0 {
-                let frame = hook_target.encode();
-                send(s, frame.as_ptr(), frame.len() as i32, 0);
-            }
+            store_pending_frame(s, frame);
         }
         WSASetLastError(err);
         connect_res
@@ -903,9 +1025,9 @@ pub unsafe extern "system" fn hooked_sendto(
     tolen: i32,
 ) -> i32 {
     let orig_fn = ORIG_SENDTO.load(Ordering::Relaxed);
-    if !to.is_null() {
+    let port = if !to.is_null() {
         let family = (*to).sa_family;
-        let port = if family == AF_INET && tolen >= std::mem::size_of::<SOCKADDR_IN>() as i32 {
+        if family == AF_INET && tolen >= std::mem::size_of::<SOCKADDR_IN>() as i32 {
             let sin = &*(to as *const SOCKADDR_IN);
             Some(u16::from_be(sin.sin_port))
         } else if family == AF_INET6 && tolen >= std::mem::size_of::<SOCKADDR_IN6>() as i32 {
@@ -913,19 +1035,14 @@ pub unsafe extern "system" fn hooked_sendto(
             Some(u16::from_be(sin6.sin6_port))
         } else {
             None
-        };
+        }
+    } else {
+        get_connected_peer_port(s)
+    };
 
-        if let Some(port) = port {
-            // 阻断 QUIC (UDP/443)
-            if port == 443 {
-                WSASetLastError(WSAECONNREFUSED);
-                return SOCKET_ERROR;
-            }
-            // 严格防泄漏模式阻断 UDP/53 DNS
-            if port == 53 && STRICT_DNS.load(Ordering::Relaxed) {
-                WSASetLastError(WSAECONNREFUSED);
-                return SOCKET_ERROR;
-            }
+    if let Some(port) = port {
+        if check_udp_security_block(port) {
+            return SOCKET_ERROR;
         }
     }
 
@@ -939,6 +1056,67 @@ pub unsafe extern "system" fn hooked_sendto(
             i32,
         ) -> i32 = std::mem::transmute(orig_fn);
         func(s, buf, len, flags, to, tolen)
+    } else {
+        SOCKET_ERROR
+    }
+}
+
+pub unsafe extern "system" fn hooked_wsasendto(
+    s: SOCKET,
+    lp_buffers: *const WsaBuf,
+    dw_buffer_count: u32,
+    lp_number_of_bytes_sent: *mut u32,
+    dw_flags: u32,
+    lp_to: *const SOCKADDR,
+    i_tolen: i32,
+    lp_overlapped: *mut c_void,
+    lp_completion_routine: *mut c_void,
+) -> i32 {
+    let orig_fn = ORIG_WSASENDTO.load(Ordering::Relaxed);
+    let port = if !lp_to.is_null() {
+        let family = (*lp_to).sa_family;
+        if family == AF_INET && i_tolen >= std::mem::size_of::<SOCKADDR_IN>() as i32 {
+            let sin = &*(lp_to as *const SOCKADDR_IN);
+            Some(u16::from_be(sin.sin_port))
+        } else if family == AF_INET6 && i_tolen >= std::mem::size_of::<SOCKADDR_IN6>() as i32 {
+            let sin6 = &*(lp_to as *const SOCKADDR_IN6);
+            Some(u16::from_be(sin6.sin6_port))
+        } else {
+            None
+        }
+    } else {
+        get_connected_peer_port(s)
+    };
+
+    if let Some(port) = port {
+        if check_udp_security_block(port) {
+            return SOCKET_ERROR;
+        }
+    }
+
+    if orig_fn != 0 {
+        let func: unsafe extern "system" fn(
+            SOCKET,
+            *const WsaBuf,
+            u32,
+            *mut u32,
+            u32,
+            *const SOCKADDR,
+            i32,
+            *mut c_void,
+            *mut c_void,
+        ) -> i32 = std::mem::transmute(orig_fn);
+        func(
+            s,
+            lp_buffers,
+            dw_buffer_count,
+            lp_number_of_bytes_sent,
+            dw_flags,
+            lp_to,
+            i_tolen,
+            lp_overlapped,
+            lp_completion_routine,
+        )
     } else {
         SOCKET_ERROR
     }
@@ -997,6 +1175,14 @@ pub unsafe extern "system" fn hooked_getprocaddress(
                             unsafe extern "system" fn() -> isize,
                         >(
                             hooked_sendto as *const ()
+                        ))
+                    }
+                    "WSASendTo" => {
+                        return Some(std::mem::transmute::<
+                            *const (),
+                            unsafe extern "system" fn() -> isize,
+                        >(
+                            hooked_wsasendto as *const ()
                         ))
                     }
                     "LoadLibraryW" => {
@@ -1149,6 +1335,14 @@ pub unsafe extern "system" fn hooked_getprocaddress(
                             unsafe extern "system" fn() -> isize,
                         >(
                             hooked_wsasend as *const ()
+                        ))
+                    }
+                    73 => {
+                        return Some(std::mem::transmute::<
+                            *const (),
+                            unsafe extern "system" fn() -> isize,
+                        >(
+                            hooked_wsasendto as *const ()
                         ))
                     }
                     19 => {
@@ -1508,3 +1702,52 @@ pub unsafe extern "system" fn hooked_createprocessa(
     IN_CREATE_PROCESS.with(|c| c.set(false));
     ret
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_udp_security_block_quic_and_dns() {
+        STRICT_DNS.store(true, Ordering::Relaxed);
+        assert!(unsafe { check_udp_security_block(443) });
+        assert!(unsafe { check_udp_security_block(53) });
+        assert!(!unsafe { check_udp_security_block(80) });
+        assert!(!unsafe { check_udp_security_block(8080) });
+
+        STRICT_DNS.store(false, Ordering::Relaxed);
+        assert!(unsafe { check_udp_security_block(443) });
+        assert!(!unsafe { check_udp_security_block(53) });
+        STRICT_DNS.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn test_pending_connect_frames_lifecycle() {
+        let fake_socket: SOCKET = 12345;
+        remove_pending_frame(fake_socket);
+        assert!(take_pending_frame(fake_socket).is_none());
+
+        let frame = vec![1, 2, 3, 4, 5];
+        store_pending_frame(fake_socket, frame.clone());
+        let retrieved = take_pending_frame(fake_socket);
+        assert_eq!(retrieved, Some(frame));
+        // 取出后队列中不再存在
+        assert!(take_pending_frame(fake_socket).is_none());
+
+        // 显式清理测试
+        store_pending_frame(fake_socket, vec![9, 9, 9]);
+        remove_pending_frame(fake_socket);
+        assert!(take_pending_frame(fake_socket).is_none());
+    }
+
+    #[test]
+    fn test_build_hooks_contains_wsasendto() {
+        let hooks = unsafe { build_hooks() };
+        assert_eq!(hooks.len(), 17);
+        let has_sendto = hooks.iter().any(|h| h.func_name == "sendto" && h.ordinal == 20);
+        let has_wsasendto = hooks.iter().any(|h| h.func_name == "WSASendTo" && h.ordinal == 73);
+        assert!(has_sendto, "hooks must contain sendto");
+        assert!(has_wsasendto, "hooks must contain WSASendTo");
+    }
+}
+

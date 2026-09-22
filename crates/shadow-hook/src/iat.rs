@@ -54,6 +54,11 @@ pub unsafe fn hook_module_iat(base_addr: usize, hooks: &[HookDef]) {
         return;
     }
 
+    // 边界守护：检查 e_lfanew 范围，防止解析畸形或加壳 PE 导致 0xC0000005 访问违例
+    if dos_header.e_lfanew < 0x40 || dos_header.e_lfanew > 0x1000_0000 {
+        return;
+    }
+
     let nt_ptr = (base_addr as isize + dos_header.e_lfanew as isize) as *const u8;
     let signature = *(nt_ptr as *const u32);
     if signature != 0x00004550 {
@@ -68,13 +73,18 @@ pub unsafe fn hook_module_iat(base_addr: usize, hooks: &[HookDef]) {
     };
 
     let import_dir = &*(nt_ptr.add(import_dir_offset) as *const ImageDataDirectory);
-    if import_dir.virtual_address == 0 || import_dir.size == 0 {
+    if import_dir.virtual_address == 0 || import_dir.size == 0 || import_dir.virtual_address > 0x7FFF_FFFF {
         return;
     }
 
-    let mut desc = (base_addr + import_dir.virtual_address as usize) as *const ImageImportDescriptor;
+    let import_dir_start = base_addr + import_dir.virtual_address as usize;
+    let import_dir_end = import_dir_start.saturating_add(import_dir.size as usize);
+    let mut desc = import_dir_start as *const ImageImportDescriptor;
 
-    while (*desc).name != 0 {
+    while (desc as usize) + std::mem::size_of::<ImageImportDescriptor>() <= import_dir_end {
+        if (*desc).name == 0 || (*desc).name >= 0x7FFF_FFFF {
+            break;
+        }
         let name_ptr = (base_addr + (*desc).name as usize) as *const c_char;
         let dll_name_str = match std::ffi::CStr::from_ptr(name_ptr).to_str() {
             Ok(s) => s,
@@ -124,9 +134,13 @@ unsafe fn apply_hook_to_descriptor(
         (*desc).first_thunk
     };
 
+    if thunk_rva == 0 || thunk_rva >= 0x7FFF_FFFF || (*desc).first_thunk == 0 || (*desc).first_thunk >= 0x7FFF_FFFF {
+        return;
+    }
+
     let step = if is_64bit { 8 } else { 4 };
     let mut orig_thunk = (base + thunk_rva as usize) as *const u8;
-    let mut iat_thunk = (base + (*desc).first_thunk as usize) as *mut usize;
+    let mut iat_thunk = (base + (*desc).first_thunk as usize) as *mut u8;
 
     loop {
         let is_ordinal = if is_64bit {
@@ -161,8 +175,7 @@ unsafe fn apply_hook_to_descriptor(
                 *(orig_thunk as *const u32) as usize
             };
 
-            // 边界守护：校验 name_rva 范围，防止畸形 PE 导致非法指针解引用 (0xC0000005)
-            if name_rva != 0 && name_rva < 0x4000_0000 {
+            if (0x40..0x4000_0000).contains(&name_rva) {
                 // IMAGE_IMPORT_BY_NAME: Hint (2 bytes), Name (null-terminated ASCII)
                 let func_name_ptr = (base + name_rva + 2) as *const c_char;
                 if let Ok(func_name) = std::ffi::CStr::from_ptr(func_name_ptr).to_str() {
@@ -174,40 +187,73 @@ unsafe fn apply_hook_to_descriptor(
         }
 
         if matched {
-            let current_target = *iat_thunk;
-            if current_target != hook.hook_addr {
-                // 首次拦截保存真实原始地址
-                if hook.orig_addr.load(Ordering::Relaxed) == 0 {
-                    hook.orig_addr.store(current_target, Ordering::Relaxed);
-                }
+            if is_64bit {
+                let p = iat_thunk as *mut u64;
+                let current_target = *p as usize;
+                if current_target != hook.hook_addr {
+                    // 首次拦截保存真实原始地址
+                    if hook.orig_addr.load(Ordering::Relaxed) == 0 {
+                        hook.orig_addr.store(current_target, Ordering::Relaxed);
+                    }
 
-                let mut old_protect = 0u32;
-                if VirtualProtect(
-                    iat_thunk as *mut c_void,
-                    step,
-                    PAGE_READWRITE,
-                    &mut old_protect,
-                ) != 0
-                {
-                    *iat_thunk = hook.hook_addr;
-                    VirtualProtect(
-                        iat_thunk as *mut c_void,
-                        step,
-                        old_protect,
+                    let mut old_protect = 0u32;
+                    if VirtualProtect(
+                        p as *mut c_void,
+                        8,
+                        PAGE_READWRITE,
                         &mut old_protect,
-                    );
-                    FlushInstructionCache(
-                        GetCurrentProcess(),
-                        iat_thunk as *const c_void,
-                        step,
-                    );
+                    ) != 0
+                    {
+                        *p = hook.hook_addr as u64;
+                        VirtualProtect(
+                            p as *mut c_void,
+                            8,
+                            old_protect,
+                            &mut old_protect,
+                        );
+                        FlushInstructionCache(
+                            GetCurrentProcess(),
+                            p as *const c_void,
+                            8,
+                        );
+                    }
+                }
+            } else {
+                let p = iat_thunk as *mut u32;
+                let current_target = *p as usize;
+                if current_target != hook.hook_addr {
+                    if hook.orig_addr.load(Ordering::Relaxed) == 0 {
+                        hook.orig_addr.store(current_target, Ordering::Relaxed);
+                    }
+
+                    let mut old_protect = 0u32;
+                    if VirtualProtect(
+                        p as *mut c_void,
+                        4,
+                        PAGE_READWRITE,
+                        &mut old_protect,
+                    ) != 0
+                    {
+                        *p = hook.hook_addr as u32;
+                        VirtualProtect(
+                            p as *mut c_void,
+                            4,
+                            old_protect,
+                            &mut old_protect,
+                        );
+                        FlushInstructionCache(
+                            GetCurrentProcess(),
+                            p as *const c_void,
+                            4,
+                        );
+                    }
                 }
             }
             break;
         }
 
         orig_thunk = orig_thunk.add(step);
-        iat_thunk = ((iat_thunk as usize) + step) as *mut usize;
+        iat_thunk = iat_thunk.add(step);
     }
 }
 
@@ -250,3 +296,50 @@ pub unsafe fn hook_all_loaded_modules(hooks: &[HookDef]) {
 
     CloseHandle(snap);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_iat_guard_null_and_invalid_base() {
+        let hooks = [];
+        unsafe {
+            hook_module_iat(0, &hooks);
+        }
+    }
+
+    #[test]
+    fn test_iat_guard_malformed_dos_header() {
+        let hooks = [];
+        let fake_mem = [0u8; 128];
+        unsafe {
+            hook_module_iat(fake_mem.as_ptr() as usize, &hooks);
+        }
+
+        #[repr(C)]
+        struct BadDos {
+            magic: u16,
+            pad: [u16; 29],
+            e_lfanew: i32,
+        }
+        let bad = BadDos {
+            magic: 0x5A4D,
+            pad: [0; 29],
+            e_lfanew: -100,
+        };
+        unsafe {
+            hook_module_iat(&bad as *const _ as usize, &hooks);
+        }
+
+        let bad_huge = BadDos {
+            magic: 0x5A4D,
+            pad: [0; 29],
+            e_lfanew: 0x2000_0000,
+        };
+        unsafe {
+            hook_module_iat(&bad_huge as *const _ as usize, &hooks);
+        }
+    }
+}
+

@@ -2056,6 +2056,9 @@
       setInterval(() => {
         sendIpc("get_state");
       }, 1000);
+      requestAnimationFrame(() => {
+        sendIpc("window_ready");
+      });
     });
   </script>
 </body>
