@@ -92,6 +92,7 @@ pub struct PresetItem {
 #[derive(Serialize, Clone, Debug)]
 struct ProcessInfo {
     pid: u32,
+    parent_pid: Option<u32>,
     name: String,
     path: String,
     arch: String,
@@ -101,6 +102,7 @@ struct ProcessInfo {
 
 struct TrackedProcess {
     pid: u32,
+    parent_pid: Option<u32>,
     name: String,
     path: String,
     arch: String,
@@ -530,6 +532,7 @@ impl AppState {
 
         self.processes.push(TrackedProcess {
             pid,
+            parent_pid: None,
             name: file_name,
             path: target_str.to_string(),
             arch: format!("{:?}", arch),
@@ -602,7 +605,7 @@ impl AppState {
             let children = scan_child_processes(&active_pids);
             let dll_x64 = resolve_hook_dll(Architecture::X64).ok();
 
-            for (child_pid, _parent_pid, child_name) in children {
+            for (child_pid, parent_pid, child_name) in children {
                 if !self.processes.iter().any(|p| p.pid == child_pid) {
                     // 确保子进程被注入最新的 Hook 动态库
                     if let Some(ref dll_path) = dll_x64 {
@@ -621,6 +624,7 @@ impl AppState {
 
                     self.processes.push(TrackedProcess {
                         pid: child_pid,
+                        parent_pid: Some(parent_pid),
                         name: child_name.clone(),
                         path: child_name.clone(),
                         arch: "X64".to_string(),
@@ -630,8 +634,8 @@ impl AppState {
                     });
 
                     self.last_log = Some(format!(
-                        "[INJECT] 自动纳管并注入子进程 {} (PID: {})",
-                        child_name, child_pid
+                        "[INJECT] 自动纳管并注入子进程 {} (PID: {}, 父PID: {})",
+                        child_name, child_pid, parent_pid
                     ));
                 }
             }
@@ -651,6 +655,7 @@ impl AppState {
             .iter()
             .map(|p| ProcessInfo {
                 pid: p.pid,
+                parent_pid: p.parent_pid,
                 name: p.name.clone(),
                 path: p.path.clone(),
                 arch: p.arch.clone(),

@@ -1439,17 +1439,59 @@ pub unsafe extern "system" fn hooked_loadlibraryexa(
     hmod
 }
 
-unsafe fn inject_child_process(h_process: windows_sys::Win32::Foundation::HANDLE) {
+struct CreateProcessGuard;
+
+impl CreateProcessGuard {
+    fn enter() -> Option<Self> {
+        IN_CREATE_PROCESS.with(|c| {
+            if c.get() {
+                None
+            } else {
+                c.set(true);
+                Some(Self)
+            }
+        })
+    }
+}
+
+impl Drop for CreateProcessGuard {
+    fn drop(&mut self) {
+        IN_CREATE_PROCESS.with(|c| c.set(false));
+    }
+}
+
+pub unsafe fn inject_child_process(h_process: windows_sys::Win32::Foundation::HANDLE) {
     if h_process.is_null() {
         crate::hook_log("inject_child_process: h_process is null");
         return;
     }
 
-    // 1. 获取当前 shadow_hook 自身的绝对路径
+    // 0. 检查子进程架构兼容性 (防止跨 64 位与 32 位直接注入导致目标应用崩溃)
+    let mut is_wow64: windows_sys::Win32::Foundation::BOOL = 0;
+    let ok = windows_sys::Win32::System::Threading::IsWow64Process(h_process, &mut is_wow64);
+    if ok != 0 {
+        #[cfg(target_pointer_width = "64")]
+        if is_wow64 != 0 {
+            crate::hook_log("inject_child_process: child is 32-bit (WOW64), skipping direct 64-bit injection to avoid crash");
+            return;
+        }
+        #[cfg(target_pointer_width = "32")]
+        if is_wow64 == 0 {
+            crate::hook_log("inject_child_process: child is 64-bit, skipping direct 32-bit injection to avoid crash");
+            return;
+        }
+    }
+
+    // 1. 获取当前 shadow_hook 自身的绝对路径 (必须非空且必须为我们自身模块)
+    let our_base = crate::iat::OUR_MODULE_BASE.load(Ordering::Relaxed);
+    if our_base == 0 {
+        crate::hook_log("inject_child_process: OUR_MODULE_BASE is 0, skipping injection");
+        return;
+    }
+
     let mut dll_path_buf = [0u16; 1024];
-    let our_base = crate::iat::OUR_MODULE_BASE.load(Ordering::Relaxed) as windows_sys::Win32::Foundation::HMODULE;
     let len = windows_sys::Win32::System::LibraryLoader::GetModuleFileNameW(
-        our_base,
+        our_base as windows_sys::Win32::Foundation::HMODULE,
         dll_path_buf.as_mut_ptr(),
         dll_path_buf.len() as u32,
     );
@@ -1457,9 +1499,6 @@ unsafe fn inject_child_process(h_process: windows_sys::Win32::Foundation::HANDLE
         crate::hook_log("inject_child_process: GetModuleFileNameW failed");
         return;
     }
-
-    let dll_path = String::from_utf16_lossy(&dll_path_buf[..len as usize]);
-    crate::hook_log(&format!("inject_child_process: path = {}", dll_path));
 
     let dll_size_bytes = (len as usize + 1) * std::mem::size_of::<u16>();
 
@@ -1532,20 +1571,31 @@ unsafe fn inject_child_process(h_process: windows_sys::Win32::Foundation::HANDLE
 
     if remote_thread.is_null() {
         crate::hook_log(&format!("inject_child_process: CreateRemoteThread failed, err {}", windows_sys::Win32::Foundation::GetLastError()));
-    } else {
-        windows_sys::Win32::System::Threading::WaitForSingleObject(remote_thread, 5000);
+        windows_sys::Win32::System::Memory::VirtualFreeEx(
+            h_process,
+            remote_mem,
+            0,
+            windows_sys::Win32::System::Memory::MEM_RELEASE,
+        );
+        return;
+    }
+
+    // 6. 等待注入线程执行完毕 (安全超时保护：若超时则不立即释放远程内存，杜绝 UAF 崩溃)
+    let wait_res = windows_sys::Win32::System::Threading::WaitForSingleObject(remote_thread, 5000);
+    if wait_res == windows_sys::Win32::Foundation::WAIT_OBJECT_0 {
         let mut exit_code = 0u32;
         windows_sys::Win32::System::Threading::GetExitCodeThread(remote_thread, &mut exit_code);
         crate::hook_log(&format!("inject_child_process: remote LoadLibraryW thread exit code: {:#x}", exit_code));
-        windows_sys::Win32::Foundation::CloseHandle(remote_thread);
+        windows_sys::Win32::System::Memory::VirtualFreeEx(
+            h_process,
+            remote_mem,
+            0,
+            windows_sys::Win32::System::Memory::MEM_RELEASE,
+        );
+    } else {
+        crate::hook_log(&format!("inject_child_process: remote thread wait timeout or error ({}), preserving memory safely", wait_res));
     }
-
-    windows_sys::Win32::System::Memory::VirtualFreeEx(
-        h_process,
-        remote_mem,
-        0,
-        windows_sys::Win32::System::Memory::MEM_RELEASE,
-    );
+    windows_sys::Win32::Foundation::CloseHandle(remote_thread);
 }
 
 std::thread_local! {
@@ -1581,23 +1631,23 @@ pub unsafe extern "system" fn hooked_createprocessw(
         *mut windows_sys::Win32::System::Threading::PROCESS_INFORMATION,
     ) -> i32 = std::mem::transmute(orig);
 
-    let in_call = IN_CREATE_PROCESS.with(|c| c.get());
-    if in_call {
-        return orig_func(
-            lp_application_name,
-            lp_command_line,
-            lp_process_attributes,
-            lp_thread_attributes,
-            b_inherit_handles,
-            dw_creation_flags,
-            lp_environment,
-            lp_current_directory,
-            lp_startup_info,
-            lp_process_information,
-        );
-    }
-
-    IN_CREATE_PROCESS.with(|c| c.set(true));
+    let _guard = match CreateProcessGuard::enter() {
+        Some(g) => g,
+        None => {
+            return orig_func(
+                lp_application_name,
+                lp_command_line,
+                lp_process_attributes,
+                lp_thread_attributes,
+                b_inherit_handles,
+                dw_creation_flags,
+                lp_environment,
+                lp_current_directory,
+                lp_startup_info,
+                lp_process_information,
+            );
+        }
+    };
 
     let was_suspended = (dw_creation_flags & windows_sys::Win32::System::Threading::CREATE_SUSPENDED) != 0;
     let forced_flags = dw_creation_flags | windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
@@ -1624,7 +1674,6 @@ pub unsafe extern "system" fn hooked_createprocessw(
         }
     }
 
-    IN_CREATE_PROCESS.with(|c| c.set(false));
     ret
 }
 
@@ -1657,23 +1706,23 @@ pub unsafe extern "system" fn hooked_createprocessa(
         *mut windows_sys::Win32::System::Threading::PROCESS_INFORMATION,
     ) -> i32 = std::mem::transmute(orig);
 
-    let in_call = IN_CREATE_PROCESS.with(|c| c.get());
-    if in_call {
-        return orig_func(
-            lp_application_name,
-            lp_command_line,
-            lp_process_attributes,
-            lp_thread_attributes,
-            b_inherit_handles,
-            dw_creation_flags,
-            lp_environment,
-            lp_current_directory,
-            lp_startup_info,
-            lp_process_information,
-        );
-    }
-
-    IN_CREATE_PROCESS.with(|c| c.set(true));
+    let _guard = match CreateProcessGuard::enter() {
+        Some(g) => g,
+        None => {
+            return orig_func(
+                lp_application_name,
+                lp_command_line,
+                lp_process_attributes,
+                lp_thread_attributes,
+                b_inherit_handles,
+                dw_creation_flags,
+                lp_environment,
+                lp_current_directory,
+                lp_startup_info,
+                lp_process_information,
+            );
+        }
+    };
 
     let was_suspended = (dw_creation_flags & windows_sys::Win32::System::Threading::CREATE_SUSPENDED) != 0;
     let forced_flags = dw_creation_flags | windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
@@ -1693,13 +1742,13 @@ pub unsafe extern "system" fn hooked_createprocessa(
 
     if ret != 0 && !lp_process_information.is_null() {
         let pi = &*lp_process_information;
+        crate::hook_log(&format!("hooked_createprocessa: child PID {}", pi.dwProcessId));
         inject_child_process(pi.hProcess);
         if !was_suspended {
             windows_sys::Win32::System::Threading::ResumeThread(pi.hThread);
         }
     }
 
-    IN_CREATE_PROCESS.with(|c| c.set(false));
     ret
 }
 
@@ -1749,5 +1798,66 @@ mod tests {
         assert!(has_sendto, "hooks must contain sendto");
         assert!(has_wsasendto, "hooks must contain WSASendTo");
     }
+
+    #[test]
+    fn test_createprocess_flags_logic() {
+        use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+        // 场景 1: 调用方原本不带 CREATE_SUSPENDED
+        let flags_normal = 0u32;
+        let was_suspended_1 = (flags_normal & CREATE_SUSPENDED) != 0;
+        let forced_flags_1 = flags_normal | CREATE_SUSPENDED;
+        assert!(!was_suspended_1, "原调用不应被判定为挂起");
+        assert_eq!(forced_flags_1, CREATE_SUSPENDED, "强制标志位必须附加 CREATE_SUSPENDED");
+
+        // 场景 2: 调用方原本已指定 CREATE_SUSPENDED 及其他标志
+        let flags_already_suspended = CREATE_SUSPENDED | 0x00000004; // 示例: CREATE_SUSPENDED | DEBUG_PROCESS
+        let was_suspended_2 = (flags_already_suspended & CREATE_SUSPENDED) != 0;
+        let forced_flags_2 = flags_already_suspended | CREATE_SUSPENDED;
+        assert!(was_suspended_2, "原调用应被正确判定为已挂起");
+        assert_eq!(forced_flags_2, flags_already_suspended, "强制标志位保留原状态");
+    }
+
+    #[test]
+    fn test_createprocess_reentrancy_guard() {
+        // 初始状态下未重入
+        let g1 = CreateProcessGuard::enter();
+        assert!(g1.is_some(), "首层调用必须成功获取重入守卫");
+
+        // 在 g1 作用域内尝试重入，必须被拦截拒绝
+        let g2 = CreateProcessGuard::enter();
+        assert!(g2.is_none(), "嵌套调用时必须判定为重入并拒绝再次获取守卫");
+
+        // 释放 g1
+        drop(g1);
+
+        // 离开作用域后应恢复可用
+        let g3 = CreateProcessGuard::enter();
+        assert!(g3.is_some(), "首层守卫释放后必须成功恢复可用状态");
+        drop(g3);
+    }
+
+    #[test]
+    fn test_inject_child_process_null_safe() {
+        // 验证空句柄传入时不发生 panic 并安全短路返回
+        unsafe {
+            inject_child_process(core::ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn test_inject_child_process_zero_module_base_safe() {
+        let old_base = crate::iat::OUR_MODULE_BASE.load(Ordering::Relaxed);
+        crate::iat::OUR_MODULE_BASE.store(0, Ordering::Relaxed);
+
+        // 当 OUR_MODULE_BASE 为 0 时，即使用伪句柄调用也必须安全短路返回，杜绝将主程序 exe 当作 dll 注入
+        let fake_handle = 0x1234 as windows_sys::Win32::Foundation::HANDLE;
+        unsafe {
+            inject_child_process(fake_handle);
+        }
+
+        crate::iat::OUR_MODULE_BASE.store(old_base, Ordering::Relaxed);
+    }
 }
+
 

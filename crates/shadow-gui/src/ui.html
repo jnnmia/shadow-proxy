@@ -1788,10 +1788,14 @@
               ? `<button class="btn-terminate" onclick="killProcess(${p.pid})">终止</button>` 
               : `<span style="color: var(--text-subtle); font-size: 11px;">已注销</span>`;
 
+            const isChild = typeof p.parent_pid === 'number' && p.parent_pid > 0;
+            const treePrefix = isChild ? `<span style="color: var(--text-subtle); font-family: monospace; font-size: 11px; margin-right: 4px;">└─</span>` : "";
+            const parentBadge = isChild ? `<span style="font-size: 10px; color: var(--text-subtle); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; margin-left: 6px;">父PID: ${p.parent_pid}</span>` : "";
+
             html += `
               <tr>
                 <td>${p.pid}</td>
-                <td title="${p.path}"><strong>${p.name}</strong> <span style="font-size: 10.5px; color: var(--text-muted); margin-left: 4px;">${p.path !== p.name ? p.path : ""}</span></td>
+                <td title="${p.path}">${treePrefix}<strong>${p.name}</strong>${parentBadge} <span style="font-size: 10.5px; color: var(--text-muted); margin-left: 4px;">${p.path !== p.name ? p.path : ""}</span></td>
                 <td><span class="${archClass}">${p.arch}</span></td>
                 <td><span class="${statusClass}"><span class="status-dot" style="background: currentColor; width: 6px; height: 6px;"></span>${statusDesc}</span></td>
                 <td style="text-align: center;">${actionBtn}</td>
