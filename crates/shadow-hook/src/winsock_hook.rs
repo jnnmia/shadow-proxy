@@ -1460,6 +1460,36 @@ impl Drop for CreateProcessGuard {
     }
 }
 
+#[cfg(target_pointer_width = "64")]
+unsafe fn find_sibling_file(name: &str) -> Option<String> {
+    let our_base = crate::iat::OUR_MODULE_BASE.load(Ordering::Relaxed);
+    if our_base == 0 {
+        return None;
+    }
+    let mut buf = [0u16; 1024];
+    let len = windows_sys::Win32::System::LibraryLoader::GetModuleFileNameW(
+        our_base as windows_sys::Win32::Foundation::HMODULE,
+        buf.as_mut_ptr(),
+        buf.len() as u32,
+    );
+    if len == 0 {
+        return None;
+    }
+    let path_str = String::from_utf16_lossy(&buf[..len as usize]);
+    let p = std::path::Path::new(&path_str);
+    if let Some(dir) = p.parent() {
+        let direct = dir.join(name);
+        if direct.exists() {
+            return Some(direct.to_string_lossy().to_string());
+        }
+        let bin_sub = dir.join("bin").join(name);
+        if bin_sub.exists() {
+            return Some(bin_sub.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
 pub unsafe fn inject_child_process(h_process: windows_sys::Win32::Foundation::HANDLE) {
     if h_process.is_null() {
         crate::hook_log("inject_child_process: h_process is null");
@@ -1472,7 +1502,37 @@ pub unsafe fn inject_child_process(h_process: windows_sys::Win32::Foundation::HA
     if ok != 0 {
         #[cfg(target_pointer_width = "64")]
         if is_wow64 != 0 {
-            crate::hook_log("inject_child_process: child is 32-bit (WOW64), skipping direct 64-bit injection to avoid crash");
+            let child_pid = windows_sys::Win32::System::Threading::GetProcessId(h_process);
+            crate::hook_log(&format!("inject_child_process: child PID {} is 32-bit (WOW64), attempting 32-bit helper injection", child_pid));
+            if let Some(injector32) = find_sibling_file("shadow-injector32.exe") {
+                if let Some(dll32) = find_sibling_file("shadow_hook32.dll") {
+                    let cmd_str = format!("\"{}\" --pid {} --dll \"{}\"\0", injector32, child_pid, dll32);
+                    let mut cmd_vec: Vec<u16> = cmd_str.encode_utf16().collect();
+                    let mut si: windows_sys::Win32::System::Threading::STARTUPINFOW = std::mem::zeroed();
+                    si.cb = std::mem::size_of::<windows_sys::Win32::System::Threading::STARTUPINFOW>() as u32;
+                    let mut pi: windows_sys::Win32::System::Threading::PROCESS_INFORMATION = std::mem::zeroed();
+                    let success = windows_sys::Win32::System::Threading::CreateProcessW(
+                        std::ptr::null(),
+                        cmd_vec.as_mut_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        0x0800_0000, // CREATE_NO_WINDOW
+                        std::ptr::null_mut(),
+                        std::ptr::null(),
+                        &si,
+                        &mut pi,
+                    );
+                    if success != 0 {
+                        windows_sys::Win32::System::Threading::WaitForSingleObject(pi.hProcess, 5000);
+                        windows_sys::Win32::Foundation::CloseHandle(pi.hThread);
+                        windows_sys::Win32::Foundation::CloseHandle(pi.hProcess);
+                        crate::hook_log("inject_child_process: 32-bit helper injection dispatched successfully");
+                        return;
+                    }
+                }
+            }
+            crate::hook_log("inject_child_process: shadow-injector32.exe not found or failed, skipping direct 64-bit injection to avoid crash");
             return;
         }
         #[cfg(target_pointer_width = "32")]

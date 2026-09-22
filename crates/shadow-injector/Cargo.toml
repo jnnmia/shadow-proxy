@@ -4,7 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "shadow-injector"
+path = "src/main.rs"
+
 [dependencies]
 windows-sys = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+clap = { workspace = true }

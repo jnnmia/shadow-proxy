@@ -87,6 +87,32 @@ pub fn detect_architecture<P: AsRef<Path>>(path: P) -> Result<Architecture> {
     detect_architecture_from_bytes(&bytes)
 }
 
+/// 查找 32 位专用注入模块 (shadow-injector32.exe) 的路径
+pub fn resolve_injector32_exe() -> Option<std::path::PathBuf> {
+    let names = ["shadow-injector32.exe", "shadow_injector32.exe", "shadow-injector.exe"];
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(dir) = current_exe.parent() {
+            for name in &names {
+                let candidate = dir.join(name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+                let bin_candidate = dir.join("bin").join(name);
+                if bin_candidate.exists() {
+                    return Some(bin_candidate);
+                }
+            }
+        }
+    }
+    for name in &names {
+        let p = std::path::PathBuf::from(format!("bin\\{}", name));
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 /// 将 Rust 字符串转换为 Windows 宽字符 (UTF-16 带 Null 结尾)
 fn to_wide_chars<S: AsRef<OsStr>>(s: S) -> Vec<u16> {
     s.as_ref().encode_wide().chain(std::iter::once(0)).collect()
@@ -235,9 +261,40 @@ pub fn spawn_and_inject_with_args<P: AsRef<Path>>(
 
     #[cfg(target_pointer_width = "64")]
     if arch == Architecture::X86 {
-        return Err(InjectorError::InvalidPe(
-            "架构不匹配: 目标程序是 32 位 (X86)，当前 64 位注入器无法直接注入，请调度 32 位专用注入模块".into()
-        ));
+        tracing::info!("目标程序为 32 位 (X86)，正在调度 32 位专用注入模块...");
+        if let Some(helper_exe) = resolve_injector32_exe() {
+            let mut cmd = std::process::Command::new(helper_exe);
+            cmd.arg("--target").arg(&resolved_target);
+            cmd.arg("--dll").arg(dll_path);
+            if let Some(ref args) = combined_args {
+                cmd.arg("--args").arg(args);
+            }
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            let output = cmd.output().map_err(|e| {
+                InjectorError::InvalidPe(format!("调度 32 位注入器助手失败: {}", e))
+            })?;
+            if !output.status.success() {
+                let err_msg = String::from_utf8_lossy(&output.stderr);
+                return Err(InjectorError::InvalidPe(format!(
+                    "32 位注入器执行失败: {}",
+                    err_msg.trim()
+                )));
+            }
+            let stdout_str = String::from_utf8_lossy(&output.stdout);
+            for line in stdout_str.lines() {
+                if let Some(pid_str) = line.strip_prefix("PID:") {
+                    if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                        tracing::info!("32 位专用注入模块执行完成，目标 PID: {}", pid);
+                        return Ok(pid);
+                    }
+                }
+            }
+            return Err(InjectorError::InvalidPe("未能从 32 位注入器解析输出的 PID".into()));
+        } else {
+            return Err(InjectorError::InvalidPe(
+                "架构不匹配: 目标程序是 32 位 (X86)，未找到 32 位专用注入模块 (shadow-injector32.exe)。请确保 bin 目录下存在该组件".into()
+            ));
+        }
     }
     #[cfg(target_pointer_width = "32")]
     if arch == Architecture::X64 || arch == Architecture::Arm64 {
@@ -439,10 +496,31 @@ pub fn inject_existing_pid<P: AsRef<Path>>(pid: u32, dll_path: P) -> Result<()> 
         if IsWow64Process(process_handle, &mut is_wow64) != 0 {
             #[cfg(target_pointer_width = "64")]
             if is_wow64 != 0 {
-                return Err(InjectorError::InvalidPe(format!(
-                    "架构不匹配: PID {} 为 32 位 (WOW64) 进程，当前 64 位注入器无法直接注入，请调度 32 位专用模块",
-                    pid
-                )));
+                drop(proc_guard);
+                tracing::info!("PID {} 为 32 位 (WOW64) 进程，调度 32 位专用注入模块执行附加注入...", pid);
+                if let Some(helper_exe) = resolve_injector32_exe() {
+                    let mut cmd = std::process::Command::new(helper_exe);
+                    cmd.arg("--pid").arg(pid.to_string());
+                    cmd.arg("--dll").arg(dll_p);
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                    let output = cmd.output().map_err(|e| {
+                        InjectorError::InvalidPe(format!("调度 32 位注入器附加注入失败: {}", e))
+                    })?;
+                    if !output.status.success() {
+                        let err_msg = String::from_utf8_lossy(&output.stderr);
+                        return Err(InjectorError::InvalidPe(format!(
+                            "32 位注入器附加注入失败: {}",
+                            err_msg.trim()
+                        )));
+                    }
+                    tracing::info!("成功通过 32 位专用注入模块向 PID {} 注入 Hook 动态库", pid);
+                    return Ok(());
+                } else {
+                    return Err(InjectorError::InvalidPe(format!(
+                        "架构不匹配: PID {} 为 32 位 (WOW64) 进程，未找到 32 位专用注入模块 (shadow-injector32.exe)",
+                        pid
+                    )));
+                }
             }
         }
 
@@ -588,10 +666,14 @@ mod tests {
     #[test]
     fn test_pe_detect_real_system32_cmd() {
         // 在 Windows 环境测试真实系统文件 cmd.exe
+        // 注意：在 32 位 (WOW64) 进程中，Windows 会将 System32 重定向至 SysWOW64 (32位 cmd.exe)
         let cmd_path = "C:\\Windows\\System32\\cmd.exe";
         if Path::new(cmd_path).exists() {
             let arch = detect_architecture(cmd_path).unwrap();
+            #[cfg(target_pointer_width = "64")]
             assert!(arch == Architecture::X64 || arch == Architecture::Arm64);
+            #[cfg(target_pointer_width = "32")]
+            assert_eq!(arch, Architecture::X86);
         }
     }
 
@@ -614,6 +696,12 @@ mod tests {
             assert!(res.is_err());
             let err_msg = res.unwrap_err().to_string();
             assert!(err_msg.contains("架构不匹配"), "错误信息不符合预期: {}", err_msg);
+        }
+
+        #[cfg(target_pointer_width = "32")]
+        {
+            let res = spawn_and_inject(&temp_exe, &dummy_dll);
+            assert!(res.is_err());
         }
 
         let _ = std::fs::remove_file(temp_exe);

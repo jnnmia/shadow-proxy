@@ -4,7 +4,8 @@
 # Rust build targets
 target/
 bin/
-.cargo/
+.cargo/*
+!.cargo/config.toml
 
 # OS metadata
 .DS_Store
