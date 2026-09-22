@@ -1,0 +1,10 @@
+[package]
+name = "shadow-injector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+windows-sys = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

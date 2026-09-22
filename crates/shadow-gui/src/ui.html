@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShadowProxy</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg-canvas: #090d14;
+      --bg-sidebar: #0b0f17;
+      --bg-surface: #111722;
+      --bg-surface-elevated: #161e2e;
+      --bg-input: #0c1017;
+      
+      --border-subtle: #1a2232;
+      --border-hover: #2a354c;
+      --border-focus: #39c5bb;
+      
+      --cyan-neon: #39c5bb;
+      --cyan-glow: rgba(57, 197, 187, 0.22);
+      --cyan-dim: rgba(57, 197, 187, 0.12);
+      
+      --blue-accent: #58a6ff;
+      --blue-dim: rgba(88, 166, 255, 0.12);
+      
+      --purple-accent: #bc8cff;
+      --purple-dim: rgba(188, 140, 255, 0.14);
+      
+      --green-live: #3fb950;
+      --green-dim: rgba(63, 185, 80, 0.15);
+      
+      --red-accent: #f85149;
+      --red-dim: rgba(248, 81, 73, 0.15);
+      
+      --text-primary: #f0f6fc;
+      --text-muted: #8b949e;
+      --text-subtle: #565f6c;
+      --text-code: #79c0ff;
+      
+      --code-font: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+      --ui-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border-subtle) transparent;
+    }
+
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-subtle);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--border-hover);
+    }
+
+    body {
+      background-color: var(--bg-canvas);
+      color: var(--text-primary);
+      font-family: var(--ui-font);
+      font-size: 13px;
+      line-height: 1.45;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* 应用核心布局：左侧导航栏 + 右侧主内容区 */
+    .app-layout {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* 左侧侧边栏导航 */
+    .sidebar {
+      width: 216px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .brand-box {
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(8, 11, 16, 0.6);
+    }
+
+    .brand-icon {
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
+      filter: drop-shadow(0 0 6px var(--cyan-glow));
+    }
+
+    .brand-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .brand-title {
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.8px;
+      color: var(--text-primary);
+      white-space: nowrap;
+    }
+
+    .badge-tag {
+      font-size: 9.5px;
+      font-family: var(--code-font);
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+      background: var(--cyan-dim);
+      border: 1px solid rgba(57, 197, 187, 0.3);
+      color: var(--cyan-neon);
+      font-weight: 600;
+      width: fit-content;
+    }
+
+    /* 导航菜单列表 */
+    .nav-menu {
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .nav-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-subtle);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      padding: 8px 8px 4px 8px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: var(--radius-md);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      position: relative;
+      border: 1px solid transparent;
+    }
+
+    .nav-item:hover {
+      color: var(--text-primary);
+      background: rgba(22, 30, 46, 0.5);
+      border-color: rgba(30, 38, 56, 0.6);
+    }
+
+    .nav-item.active {
+      color: var(--cyan-neon);
+      background: var(--cyan-dim);
+      border-color: rgba(57, 197, 187, 0.28);
+      font-weight: 600;
+    }
+
+    .nav-item.active::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 6px;
+      bottom: 6px;
+      width: 3px;
+      background: var(--cyan-neon);
+      border-radius: 0 2px 2px 0;
+      box-shadow: 0 0 8px var(--cyan-neon);
+    }
+
+    .nav-item-left {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .nav-item-icon {
+      width: 15px;
+      height: 15px;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex-shrink: 0;
+    }
+
+    .nav-item-title {
+      font-size: 12px;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+    }
+
+    .nav-badge {
+      font-size: 10px;
+      font-family: var(--code-font);
+      padding: 1px 6px;
+      border-radius: 10px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .nav-item.active .nav-badge {
+      background: rgba(57, 197, 187, 0.2);
+      border-color: rgba(57, 197, 187, 0.4);
+      color: var(--cyan-neon);
+    }
+
+    /* 侧边栏底部遥测 HUD */
+    .sidebar-hud {
+      padding: 12px;
+      border-top: 1px solid var(--border-subtle);
+      background: rgba(7, 9, 14, 0.6);
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .relay-status-chip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 9px;
+      border-radius: var(--radius-md);
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      transition: all 0.2s ease;
+    }
+
+    .relay-status-chip.active {
+      color: var(--green-live);
+      background: var(--green-dim);
+      border-color: rgba(63, 185, 80, 0.35);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-subtle);
+      flex-shrink: 0;
+      transition: all 0.2s ease;
+    }
+
+    .relay-status-chip.active .status-dot {
+      background: var(--green-live);
+      box-shadow: 0 0 8px var(--green-live);
+      animation: pulse-dot 1.8s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.85); }
+    }
+
+    .traffic-mini-meter {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .meter-tile {
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 5px 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .meter-label {
+      font-size: 9.5px;
+      color: var(--text-subtle);
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .meter-val {
+      font-family: var(--code-font);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .meter-pulse {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      height: 2px;
+      width: 0%;
+      background: var(--cyan-neon);
+      transition: width 0.25s ease-out;
+    }
+
+    /* 右侧主视图区 */
+    .main-viewport {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow-y: auto;
+      padding: 16px 20px;
+      background: var(--bg-canvas);
+    }
+
+    /* 视图面板容器 */
+    .view-pane {
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+      animation: view-fade 0.18s ease-out;
+    }
+
+    .view-pane.active {
+      display: flex;
+    }
+
+    @keyframes view-fade {
+      from { opacity: 0; transform: translateY(3px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .view-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 12px;
+      margin-bottom: 2px;
+    }
+
+    .view-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .view-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: 0.3px;
+    }
+
+    .view-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Bento 卡片通用容器 */
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color 0.15s ease;
+    }
+
+    .card:hover {
+      border-color: var(--border-hover);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(30, 38, 56, 0.6);
+      padding-bottom: 9px;
+    }
+
+    .card-title-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-icon {
+      width: 15px;
+      height: 15px;
+      stroke: var(--cyan-neon);
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .card-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-primary);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    /* 拖拽区域 */
+    .drop-zone {
+      border: 2px dashed var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-align: center;
+      cursor: pointer;
+      background: var(--bg-input);
+      transition: all 0.18s ease;
+    }
+
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--cyan-neon);
+      background: rgba(57, 197, 187, 0.05);
+      box-shadow: inset 0 0 16px rgba(57, 197, 187, 0.08);
+    }
+
+    .drop-icon {
+      width: 32px;
+      height: 32px;
+      stroke: var(--cyan-neon);
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0.9;
+    }
+
+    .drop-primary-text {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .drop-sub-text {
+      font-size: 11px;
+      color: var(--text-muted);
+      max-width: 480px;
+      line-height: 1.4;
+    }
+
+    /* 表单组件 */
+    .form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .form-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.2px;
+    }
+
+    .input-with-action {
+      display: flex;
+      gap: 8px;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      font-family: var(--code-font);
+      font-size: 12px;
+      padding: 7px 11px;
+      outline: none;
+      transition: all 0.15s ease;
+    }
+
+    input[type="text"]:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 1px var(--border-focus);
+    }
+
+    /* 按钮规范 */
+    button {
+      font-family: var(--ui-font);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: none;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .btn-cta {
+      background: var(--cyan-neon);
+      color: #080b10;
+      padding: 8px 16px;
+      box-shadow: 0 0 12px var(--cyan-glow);
+    }
+
+    .btn-cta:hover {
+      background: #4ae6db;
+      box-shadow: 0 0 18px rgba(57, 197, 187, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: var(--bg-surface-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border-subtle);
+      padding: 7px 13px;
+    }
+
+    .btn-secondary:hover {
+      background: #1c273c;
+      border-color: var(--border-hover);
+    }
+
+    .btn-danger {
+      background: var(--red-dim);
+      color: var(--red-accent);
+      border: 1px solid rgba(248, 81, 73, 0.35);
+      padding: 7px 13px;
+    }
+
+    .btn-danger:hover {
+      background: var(--red-accent);
+      color: #ffffff;
+      border-color: var(--red-accent);
+    }
+
+    /* 常用快捷预设磁贴卡片 */
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+    }
+
+    .preset-tile {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: all 0.16s ease;
+      position: relative;
+    }
+
+    .preset-tile:hover {
+      border-color: rgba(57, 197, 187, 0.4);
+      background: var(--bg-surface-elevated);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+    }
+
+    .preset-tile-header {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+    }
+
+    .preset-app-icon-wrap {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .preset-tile-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .preset-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .preset-subpath {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--code-font);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .preset-args-row {
+      font-size: 11px;
+      font-family: var(--code-font);
+      color: var(--text-code);
+      background: var(--bg-input);
+      padding: 3px 7px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(26, 34, 50, 0.8);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .preset-btn-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 2px;
+    }
+
+    .preset-launch-btn {
+      flex: 1;
+      padding: 5px 12px;
+      font-size: 11.5px;
+      background: rgba(57, 197, 187, 0.12);
+      color: var(--cyan-neon);
+      border: 1px solid rgba(57, 197, 187, 0.32);
+      border-radius: var(--radius-sm);
+    }
+
+    .preset-launch-btn:hover {
+      background: var(--cyan-neon);
+      color: #080b10;
+      border-color: var(--cyan-neon);
+    }
+
+    .preset-delete-btn {
+      padding: 5px 8px;
+      font-size: 11.5px;
+      background: transparent;
+      color: var(--text-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+    }
+
+    .preset-delete-btn:hover {
+      color: var(--red-accent);
+      background: var(--red-dim);
+      border-color: rgba(248, 81, 73, 0.3);
+    }
+
+    .preset-btn-bar button svg {
+      pointer-events: none;
+    }
+
+    .preset-empty {
+      grid-column: 1 / -1;
+      text-align: center;
+      color: var(--text-subtle);
+      padding: 42px 20px;
+      font-size: 12px;
+      background: var(--bg-surface);
+      border: 1px dashed var(--border-subtle);
+      border-radius: var(--radius-lg);
+    }
+
+    /* 进程表格 */
+    .table-viewport {
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      background: var(--bg-input);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 12px;
+    }
+
+    thead th {
+      background: var(--bg-surface-elevated);
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    tbody td {
+      padding: 9px 12px;
+      border-bottom: 1px solid rgba(26, 34, 50, 0.6);
+      font-family: var(--code-font);
+      vertical-align: middle;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    tbody tr:hover td {
+      background: rgba(22, 30, 46, 0.6);
+    }
+
+    .badge-arch {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: var(--radius-sm);
+      font-size: 10px;
+      font-weight: 700;
+      background: var(--cyan-dim);
+      color: var(--cyan-neon);
+      border: 1px solid rgba(57, 197, 187, 0.25);
+    }
+
+    .badge-arch-x86 {
+      background: rgba(88, 166, 255, 0.12);
+      color: var(--blue-accent);
+      border-color: rgba(88, 166, 255, 0.25);
+    }
+
+    .status-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 600;
+      font-size: 11px;
+    }
+
+    .status-tag.running {
+      color: var(--green-live);
+    }
+
+    .status-tag.exited {
+      color: var(--text-subtle);
+    }
+
+    .btn-terminate {
+      padding: 2px 7px;
+      font-size: 11px;
+      background: transparent;
+      color: var(--red-accent);
+      border: 1px solid rgba(248, 81, 73, 0.35);
+      border-radius: var(--radius-sm);
+    }
+
+    .btn-terminate:hover {
+      background: var(--red-accent);
+      color: #ffffff;
+    }
+
+    /* 底部通用日志栏 */
+    footer {
+      padding: 7px 18px;
+      background: #07090e;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--code-font);
+      flex-shrink: 0;
+    }
+
+    .log-stream {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 78%;
+    }
+
+    .log-prompt {
+      color: var(--cyan-neon);
+      font-weight: 700;
+    }
+
+    #logLine {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .footer-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-text {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 10.5px;
+      padding: 2px 5px;
+    }
+
+    .btn-text:hover {
+      color: var(--text-primary);
+    }
+
+    /* 动态高亮闪烁 */
+    @keyframes flash-glow {
+      0% { box-shadow: 0 0 0 3px rgba(57, 197, 187, 0.6); }
+      100% { box-shadow: 0 0 0 0 transparent; }
+    }
+
+    .highlight-flash {
+      animation: flash-glow 0.8s ease-out;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="app-layout">
+    <!-- 左侧导航栏 -->
+    <aside class="sidebar">
+      <!-- 品牌标识 -->
+      <div class="brand-box">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none">
+          <path d="M12 2L20 6.5V13C20 17.5 16.5 21 12 22C7.5 21 4 17.5 4 13V6.5L12 2Z" fill="rgba(57,197,187,0.18)" stroke="var(--cyan-neon)" stroke-width="1.8" stroke-linejoin="round" />
+          <path d="M12 7L16 11L12 15L8 11Z" fill="rgba(88,166,255,0.45)" stroke="var(--blue-accent)" stroke-width="1.4" stroke-linejoin="round" />
+          <line x1="12" y1="2" x2="12" y2="22" stroke="var(--cyan-neon)" stroke-width="1.2" stroke-opacity="0.5" />
+        </svg>
+        <div class="brand-text">
+          <span class="brand-title">SHADOW PROXY</span>
+          <span class="badge-tag">RUST CORE V0.1</span>
+        </div>
+      </div>
+
+      <!-- 导航菜单 -->
+      <nav class="nav-menu">
+        <div class="nav-label">核心控制</div>
+        
+        <div class="nav-item active" data-view="view-inject" onclick="switchNav('view-inject')">
+          <div class="nav-item-left">
+            <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <span class="nav-item-title">进程注入</span>
+          </div>
+        </div>
+
+        <div class="nav-item" data-view="view-presets" onclick="switchNav('view-presets')">
+          <div class="nav-item-left">
+            <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            <span class="nav-item-title">常用快捷</span>
+          </div>
+          <span id="navPresetBadge" class="nav-badge">0</span>
+        </div>
+
+        <div class="nav-item" data-view="view-procs" onclick="switchNav('view-procs')">
+          <div class="nav-item-left">
+            <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+            <span class="nav-item-title">进程看板</span>
+          </div>
+          <span id="navProcBadge" class="nav-badge">0</span>
+        </div>
+
+        <div class="nav-label" style="margin-top: 6px;">网络配置</div>
+
+        <div class="nav-item" data-view="view-relay" onclick="switchNav('view-relay')">
+          <div class="nav-item-left">
+            <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            <span class="nav-item-title">中继与 DNS</span>
+          </div>
+        </div>
+      </nav>
+
+      <!-- 侧边栏底部遥测 -->
+      <div class="sidebar-hud">
+        <div id="relayStatusChip" class="relay-status-chip">
+          <span>中继服务</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span id="relayStatusText">OFFLINE</span>
+            <span class="status-dot"></span>
+          </div>
+        </div>
+
+        <div class="traffic-mini-meter">
+          <div class="meter-tile">
+            <span class="meter-label">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 11 12 6 7 11"></polyline><line x1="12" y1="18" x2="12" y2="6"></line></svg>
+              TX 发送
+            </span>
+            <span id="txBytes" class="meter-val">0 B</span>
+            <div id="txPulse" class="meter-pulse"></div>
+          </div>
+          <div class="meter-tile">
+            <span class="meter-label">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="7 13 12 18 17 13"></polyline><line x1="12" y1="6" x2="12" y2="18"></line></svg>
+              RX 接收
+            </span>
+            <span id="rxBytes" class="meter-val">0 B</span>
+            <div id="rxPulse" class="meter-pulse" style="background: var(--blue-accent);"></div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 右侧主内容视口 -->
+    <main class="main-viewport">
+      
+      <!-- 视图 1: 目标进程注入 -->
+      <section id="view-inject" class="view-pane active">
+        <div class="view-header">
+          <div class="view-title-group">
+            <h1 class="view-title">目标进程注入代理</h1>
+            <p class="view-desc">支持双架构识别、子进程树全链路挂钩、IOCP 异步套接字拦截与 Fake-IP 映射</p>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" class="btn-secondary" onclick="runQuickTest()" title="运行 curl.exe 访问 api.ipify.org 验证透明代理连通性">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-neon)" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+              <span>快速测速 (curl)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 交互式拖放区 -->
+        <div id="dropZone" class="drop-zone" onclick="browseFile()">
+          <svg class="drop-icon" viewBox="0 0 24 24">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          <div class="drop-primary-text">拖入 .exe 可执行程序或 .lnk 快捷方式至此处</div>
+          <div class="drop-sub-text">支持自动解析多层快捷方式目标，挂起启动注入微运行时 DLL，全量捕获子进程网络连接</div>
+        </div>
+
+        <!-- 表单卡片 -->
+        <div class="card">
+          <div class="form-row">
+            <span class="form-label">可执行文件目标路径</span>
+            <div class="input-with-action">
+              <input type="text" id="targetPath" value="C:\Users\Jnnmi\AppData\Local\Programs\antigravity\Antigravity.exe" placeholder="C:\Windows\System32\cmd.exe" />
+              <button type="button" class="btn-secondary" onclick="browseFile()" title="浏览本地程序或快捷方式">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                <span>浏览...</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <span class="form-label">启动命令行参数 (可选)</span>
+            <input type="text" id="targetArgs" value="--no-proxy-server" placeholder="如 --no-proxy-server 或 /k ping 1.1.1.1" />
+          </div>
+
+          <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <button id="btnLaunch" class="btn-cta" style="flex: 1;" onclick="launchProcess()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              <span id="btnLaunchText">启动并注入代理</span>
+            </button>
+            <button type="button" class="btn-secondary" onclick="manualSavePreset()" title="将当前路径与参数存入快捷预设">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+              <span>加入快捷预设</span>
+            </button>
+          </div>
+
+          <div style="font-size: 11px; color: var(--text-subtle); display: flex; align-items: center; gap: 6px; margin-top: 2px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            <span>提示: 注入器启动时会自动清理 HTTP_PROXY/ALL_PROXY 旁路；子进程树扫描器每秒自动捕获并纳管新衍生的子进程。</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 视图 2: 常用快捷中心 -->
+      <section id="view-presets" class="view-pane">
+        <div class="view-header">
+          <div class="view-title-group">
+            <h1 class="view-title">常用快捷预设</h1>
+            <p class="view-desc">一键启动高频代理程序，支持专属图标展示与自定义管理</p>
+          </div>
+          <button type="button" class="btn-secondary" onclick="manualSavePreset()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span>添加当前路径</span>
+          </button>
+        </div>
+
+        <div id="presetGrid" class="preset-grid">
+          <!-- 动态渲染预设磁贴卡片 -->
+        </div>
+      </section>
+
+      <!-- 视图 3: 进程看板 -->
+      <section id="view-procs" class="view-pane">
+        <div class="view-header">
+          <div class="view-title-group">
+            <h1 class="view-title">进程看板与子进程树</h1>
+            <p class="view-desc">全量感知主进程及其派生子进程（如 language_server、NetworkService 等）的运行生命周期</p>
+          </div>
+          <div class="nav-badge" id="procSummaryBadge" style="padding: 4px 10px; font-size: 11px;">
+            0 个活动进程
+          </div>
+        </div>
+
+        <div class="table-viewport">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 80px;">PID</th>
+                <th>程序名称与路径</th>
+                <th style="width: 70px;">架构</th>
+                <th style="width: 110px;">状态</th>
+                <th style="width: 70px; text-align: center;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="procTableBody">
+              <tr>
+                <td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+                  暂无托管进程。进入“进程注入”或“常用快捷”启动目标程序。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 视图 4: 网络中继与 DNS -->
+      <section id="view-relay" class="view-pane">
+        <div class="view-header">
+          <div class="view-title-group">
+            <h1 class="view-title">透明中继与网络代理</h1>
+            <p class="view-desc">配置本地透明 TCP 中继通道、上游 SOCKS5 代理网关与 DNS 防泄漏机制</p>
+          </div>
+          <button id="btnRelayToggle" class="btn-secondary" onclick="toggleRelay()">
+            启动中继
+          </button>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <svg class="card-icon" viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+              <span class="card-title">上游 SOCKS5 网关设置</span>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <span class="form-label">上游代理地址 (IP:Port)</span>
+            <input type="text" id="upstreamProxy" value="127.0.0.1:7897" placeholder="127.0.0.1:7897" />
+          </div>
+
+          <div class="form-row">
+            <span class="form-label">本地透明中继监听端口</span>
+            <input type="text" id="localListen" value="动态分配 (待启动)" readonly style="color: var(--text-muted);" />
+          </div>
+
+          <div style="padding-top: 6px; border-top: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-weight: 600; font-size: 12.5px; color: var(--text-primary);">严格 DNS 防泄漏模式</div>
+              <div style="font-size: 11px; color: var(--text-muted);">拦截明文 UDP 53 DNS 请求并阻断 QUIC UDP 443，强制所有域名走 SOCKS5 远端安全解析</div>
+            </div>
+            <input type="checkbox" id="strictDns" checked style="width: 18px; height: 18px; accent-color: var(--cyan-neon); cursor: pointer;" />
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <svg class="card-icon" viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+              <span class="card-title">底层捕获与 Fake-IP 状态</span>
+            </div>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6;">
+            <div>• <strong style="color: var(--text-primary);">RFC 2544 Fake-IP 段</strong>：<code>198.18.0.0/15</code>，所有由注入进程发起的域名解析均映射至此内存保密保留网段。</div>
+            <div>• <strong style="color: var(--text-primary);">IOCP 异步套接字拦截</strong>：针对 Chromium 与 Go 语言等现代运行时的 <code>ConnectEx</code> 扩展函数提供原子透明重定向。</div>
+            <div>• <strong style="color: var(--text-primary);">子进程树自适应纳管</strong>：主进程派生的所有子孙进程自动继承 Hook 并动态上报至控制台。</div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- 底部终端日志与控制行 -->
+  <footer>
+    <div class="log-stream">
+      <span class="log-prompt">[SYS]</span>
+      <span id="logLine">ShadowProxy 系统就绪。</span>
+    </div>
+    <div class="footer-actions">
+      <button type="button" class="btn-text" onclick="clearLog()">清空状态</button>
+      <span style="color: var(--border-subtle)">|</span>
+      <span>ZERO-EMOJI RUST PROXIFIER</span>
+    </div>
+  </footer>
+
+  <script>
+    let isRelayRunning = false;
+    let lastBytesSent = 0;
+    let lastBytesReceived = 0;
+
+    function sendIpc(cmd, payload = {}) {
+      const msg = JSON.stringify({ cmd, ...payload });
+      if (window.ipc && window.ipc.postMessage) {
+        window.ipc.postMessage(msg);
+      } else if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
+        window.chrome.webview.postMessage(msg);
+      } else {
+        console.log("[Mock IPC]", cmd, payload);
+      }
+    }
+
+    function log(msg) {
+      const el = document.getElementById("logLine");
+      if (el) el.innerText = msg;
+    }
+
+    function clearLog() {
+      const el = document.getElementById("logLine");
+      if (el) el.innerText = "就绪。";
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return "0 B";
+      const k = 1024;
+      const sizes = ["B", "KB", "MB", "GB", "TB"];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return (bytes / Math.pow(k, i)).toFixed(1) + " " + sizes[i];
+    }
+
+    /* 视图切换 */
+    function switchNav(viewId) {
+      document.querySelectorAll(".nav-item").forEach(el => {
+        el.classList.toggle("active", el.dataset.view === viewId);
+      });
+      document.querySelectorAll(".view-pane").forEach(el => {
+        el.classList.toggle("active", el.id === viewId);
+      });
+    }
+
+    function toggleRelay() {
+      const btn = document.getElementById("btnRelayToggle");
+      if (!isRelayRunning) {
+        const proxy = document.getElementById("upstreamProxy").value.trim();
+        const strictDns = document.getElementById("strictDns").checked;
+        sendIpc("start_relay", { proxy, strict_dns: strictDns });
+        log("正在启动透明代理中继...");
+      } else {
+        sendIpc("stop_relay");
+        log("正在停止透明代理中继...");
+      }
+    }
+
+    function browseFile() {
+      sendIpc("browse_file");
+    }
+
+    /* 智能图标匹配生成器 */
+    function getAppIconSvg(name, target) {
+      const lowerName = (name + " " + target).toLowerCase();
+      
+      // 1. Antigravity: 专属 AI 双立方体发光渐变 SVG
+      if (lowerName.includes("antigravity")) {
+        return `
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <polygon points="12 2 21 7 21 17 12 22 3 17 3 7 12 2" stroke="var(--purple-accent)" stroke-width="1.8" stroke-linejoin="round" fill="rgba(188, 140, 255, 0.12)"/>
+            <polyline points="3 7 12 12 21 7" stroke="var(--cyan-neon)" stroke-width="1.5"/>
+            <line x1="12" y1="12" x2="12" y2="22" stroke="var(--cyan-neon)" stroke-width="1.5"/>
+            <circle cx="12" cy="12" r="2" fill="var(--cyan-neon)"/>
+          </svg>
+        `;
+      }
+      
+      // 2. curl / 测速工具
+      if (lowerName.includes("curl") || lowerName.includes("speed") || lowerName.includes("ping")) {
+        return `
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-neon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+          </svg>
+        `;
+      }
+      
+      // 3. 命令行 / 终端
+      if (lowerName.includes("cmd") || lowerName.includes("powershell") || lowerName.includes("pwsh") || lowerName.includes("bash") || lowerName.includes("terminal")) {
+        return `
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green-live)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
+        `;
+      }
+
+      // 4. 浏览器
+      if (lowerName.includes("chrome") || lowerName.includes("edge") || lowerName.includes("firefox") || lowerName.includes("browser")) {
+        return `
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--blue-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+          </svg>
+        `;
+      }
+
+      // 5. 编辑器 / IDE
+      if (lowerName.includes("code") || lowerName.includes("cursor") || lowerName.includes("idea") || lowerName.includes("studio")) {
+        return `
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--blue-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 18 22 12 16 6"></polyline>
+            <polyline points="8 6 2 12 8 18"></polyline>
+          </svg>
+        `;
+      }
+
+      // 6. 通用可执行程序
+      return `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-neon)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+          <rect x="9" y="9" width="6" height="6"></rect>
+          <line x1="9" y1="1" x2="9" y2="4"></line>
+          <line x1="15" y1="1" x2="15" y2="4"></line>
+          <line x1="9" y1="20" x2="9" y2="23"></line>
+          <line x1="15" y1="20" x2="15" y2="23"></line>
+        </svg>
+      `;
+    }
+
+    /* 常用预设持久化与管理（统一由 Rust 后端持久化至 %LOCALAPPDATA%\ShadowProxy\presets.json） */
+    let currentPresets = [];
+    let lastPresetsJson = "";
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function renderPresets(presets = currentPresets) {
+      const container = document.getElementById("presetGrid");
+      const badge = document.getElementById("navPresetBadge");
+      if (!container) return;
+
+      if (badge) {
+        badge.innerText = presets.length;
+      }
+
+      if (!presets || presets.length === 0) {
+        container.innerHTML = `
+          <div class="preset-empty">
+            暂无快捷预设。在“进程注入”页面输入或拖入程序后点击“加入快捷预设”，即可在此处一键启动。
+          </div>
+        `;
+        return;
+      }
+
+      let html = "";
+      presets.forEach((p, idx) => {
+        const argsText = p.args && p.args.trim().length > 0 ? p.args : "默认启动参数";
+        const iconSvg = getAppIconSvg(p.name, p.target);
+        html += `
+          <div class="preset-tile">
+            <div class="preset-tile-header" onclick="fillInputsFromPreset(${idx})" title="点击填充此路径与参数至进程注入页" style="cursor: pointer;">
+              <div class="preset-app-icon-wrap">
+                ${iconSvg}
+              </div>
+              <div class="preset-tile-info">
+                <div class="preset-title" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
+                <div class="preset-subpath" title="${escapeHtml(p.target)}">${escapeHtml(p.target)}</div>
+              </div>
+            </div>
+            <div class="preset-args-row" title="${escapeHtml(argsText)}" onclick="fillInputsFromPreset(${idx})" style="cursor: pointer;">
+              ${escapeHtml(argsText)}
+            </div>
+            <div class="preset-btn-bar">
+              <button type="button" class="preset-launch-btn" onclick="launchPreset(${idx}, event)">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <span>立即启动代理</span>
+              </button>
+              <button type="button" class="preset-delete-btn" onclick="deletePreset(${idx}, event)" title="删除此快捷预设">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              </button>
+            </div>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    }
+
+    function deletePreset(index, event) {
+      if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+      }
+      sendIpc("delete_preset", { index });
+    }
+
+    function launchPreset(index, event) {
+      if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+      }
+      const item = currentPresets[index];
+      if (!item) return;
+
+      const pathInput = document.getElementById("targetPath");
+      const argsInput = document.getElementById("targetArgs");
+      if (pathInput) pathInput.value = item.target;
+      if (argsInput) argsInput.value = item.args || "";
+      
+      flashInput(pathInput);
+      launchProcess(item.target, item.args);
+    }
+
+    function fillInputsFromPreset(index) {
+      const item = currentPresets[index];
+      if (!item) return;
+      const pathInput = document.getElementById("targetPath");
+      const argsInput = document.getElementById("targetArgs");
+      if (pathInput) pathInput.value = item.target;
+      if (argsInput) argsInput.value = item.args || "";
+      switchNav("view-inject");
+      flashInput(pathInput);
+    }
+
+    function manualSavePreset() {
+      const target = document.getElementById("targetPath").value.trim();
+      const args = document.getElementById("targetArgs").value.trim();
+      if (!target) {
+        log("[警告] 请先在输入框中指定或浏览目标程序可执行文件路径");
+        switchNav("view-inject");
+        return;
+      }
+      sendIpc("add_preset", { target, args });
+      switchNav("view-presets");
+    }
+
+    function flashInput(el) {
+      if (!el) return;
+      el.classList.remove("highlight-flash");
+      void el.offsetWidth;
+      el.classList.add("highlight-flash");
+    }
+
+    function launchProcess(overrideTarget = null, overrideArgs = null) {
+      let target = overrideTarget !== null ? overrideTarget : document.getElementById("targetPath").value.trim();
+      let args = overrideArgs !== null ? overrideArgs : document.getElementById("targetArgs").value.trim();
+      if (!target) {
+        const placeholder = document.getElementById("targetPath").placeholder;
+        if (placeholder) {
+          target = placeholder;
+          document.getElementById("targetPath").value = target;
+        } else {
+          log("[错误] 请输入或选择目标程序路径");
+          return;
+        }
+      }
+
+      const proxy = document.getElementById("upstreamProxy").value.trim();
+      const strictDns = document.getElementById("strictDns").checked;
+
+      const btn = document.getElementById("btnLaunch");
+      const btnText = document.getElementById("btnLaunchText");
+      if (btn && btnText) {
+        btn.disabled = true;
+        btnText.innerText = "注入启动中...";
+      }
+      
+      sendIpc("launch_process", { target, args, proxy, strict_dns: strictDns });
+      log("正在启动并挂起注入: " + target);
+
+      setTimeout(() => {
+        if (btn && btnText) {
+          btn.disabled = false;
+          btnText.innerText = "启动并注入代理";
+        }
+      }, 1200);
+    }
+
+    function runQuickTest() {
+      const curlPath = "C:\\Windows\\System32\\curl.exe";
+      const curlArgs = "https://api.ipify.org -v";
+      document.getElementById("targetPath").value = curlPath;
+      document.getElementById("targetArgs").value = curlArgs;
+      switchNav("view-inject");
+      flashInput(document.getElementById("targetPath"));
+      launchProcess(curlPath, curlArgs);
+    }
+
+    function killProcess(pid) {
+      sendIpc("kill_process", { pid });
+      log("已发送终止指令至 PID " + pid);
+    }
+
+    // 拖拽捕获反馈
+    const dropZone = document.getElementById("dropZone");
+    if (dropZone) {
+      ['dragenter', 'dragover'].forEach(name => {
+        dropZone.addEventListener(name, (e) => {
+          e.preventDefault();
+          dropZone.classList.add('dragover');
+        }, false);
+      });
+      ['dragleave', 'drop'].forEach(name => {
+        dropZone.addEventListener(name, (e) => {
+          e.preventDefault();
+          dropZone.classList.remove('dragover');
+        }, false);
+      });
+    }
+
+    window.updateDroppedFile = function(path, args) {
+      const pathInput = document.getElementById("targetPath");
+      const argsInput = document.getElementById("targetArgs");
+      if (pathInput) pathInput.value = path;
+      if (argsInput && args && args.trim().length > 0) {
+        argsInput.value = args.trim();
+      }
+      switchNav("view-inject");
+      flashInput(pathInput);
+      log("已拖入加载程序: " + path + (args && args.trim().length > 0 ? (" [参数: " + args.trim() + "]") : ""));
+    };
+
+    window.updateState = function(state) {
+      isRelayRunning = state.relay_active;
+      const chip = document.getElementById("relayStatusChip");
+      const statusText = document.getElementById("relayStatusText");
+      const btnRelay = document.getElementById("btnRelayToggle");
+      const localListen = document.getElementById("localListen");
+
+      if (isRelayRunning) {
+        if (chip) chip.className = "relay-status-chip active";
+        if (statusText) statusText.innerText = "ONLINE";
+        if (btnRelay) {
+          btnRelay.innerText = "停止中继";
+          btnRelay.className = "btn-danger";
+        }
+        const addr = state.relay_addr || "127.0.0.1:0";
+        if (localListen) localListen.value = addr;
+      } else {
+        if (chip) chip.className = "relay-status-chip";
+        if (statusText) statusText.innerText = "OFFLINE";
+        if (btnRelay) {
+          btnRelay.innerText = "启动中继";
+          btnRelay.className = "btn-secondary";
+        }
+        if (localListen) localListen.value = "动态分配 (待启动)";
+      }
+
+      // 流量 HUD 与脉冲动效
+      const sent = state.bytes_sent || 0;
+      const recv = state.bytes_received || 0;
+      const txEl = document.getElementById("txBytes");
+      const rxEl = document.getElementById("rxBytes");
+      if (txEl) txEl.innerText = formatBytes(sent);
+      if (rxEl) rxEl.innerText = formatBytes(recv);
+
+      const txPulse = document.getElementById("txPulse");
+      const rxPulse = document.getElementById("rxPulse");
+      if (txPulse && sent > lastBytesSent) {
+        txPulse.style.width = "100%";
+        setTimeout(() => { txPulse.style.width = "0%"; }, 400);
+      }
+      if (rxPulse && recv > lastBytesReceived) {
+        rxPulse.style.width = "100%";
+        setTimeout(() => { rxPulse.style.width = "0%"; }, 400);
+      }
+      lastBytesSent = sent;
+      lastBytesReceived = recv;
+
+      // 已托管进程列表渲染
+      const tbody = document.getElementById("procTableBody");
+      const procs = state.processes || [];
+      const procBadge = document.getElementById("navProcBadge");
+      const procSummaryBadge = document.getElementById("procSummaryBadge");
+      
+      const runningCount = procs.filter(p => p.running).length;
+      if (procBadge) procBadge.innerText = runningCount;
+      if (procSummaryBadge) procSummaryBadge.innerText = `${runningCount} / ${procs.length} 个进程运行中`;
+
+      if (tbody) {
+        if (procs.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+                暂无托管进程。进入“进程注入”或“常用快捷”启动目标程序。
+              </td>
+            </tr>
+          `;
+        } else {
+          let html = "";
+          for (const p of procs) {
+            const isX86 = (p.arch || "").toLowerCase().includes("86") && !(p.arch || "").toLowerCase().includes("64");
+            const archClass = isX86 ? "badge-arch badge-arch-x86" : "badge-arch";
+            const statusClass = p.running ? "status-tag running" : "status-tag exited";
+            const statusDesc = p.running ? "RUNNING" : "EXITED (" + p.exit_code + ")";
+            const actionBtn = p.running 
+              ? `<button class="btn-terminate" onclick="killProcess(${p.pid})">终止</button>` 
+              : `<span style="color: var(--text-subtle); font-size: 11px;">已注销</span>`;
+
+            html += `
+              <tr>
+                <td>${p.pid}</td>
+                <td title="${p.path}"><strong>${p.name}</strong> <span style="font-size: 10.5px; color: var(--text-muted); margin-left: 4px;">${p.path !== p.name ? p.path : ""}</span></td>
+                <td><span class="${archClass}">${p.arch}</span></td>
+                <td><span class="${statusClass}"><span class="status-dot" style="background: currentColor; width: 6px; height: 6px;"></span>${statusDesc}</span></td>
+                <td style="text-align: center;">${actionBtn}</td>
+              </tr>
+            `;
+          }
+          tbody.innerHTML = html;
+        }
+      }
+
+      // 常用预设列表由后端同步
+      if (Array.isArray(state.presets)) {
+        const presetsJson = JSON.stringify(state.presets);
+        if (presetsJson !== lastPresetsJson) {
+          lastPresetsJson = presetsJson;
+          currentPresets = state.presets;
+          renderPresets(currentPresets);
+        }
+      }
+
+      if (state.last_log) {
+        log(state.last_log);
+      }
+    };
+
+    window.addEventListener("DOMContentLoaded", () => {
+      renderPresets();
+      sendIpc("get_state");
+      setInterval(() => {
+        sendIpc("get_state");
+      }, 1000);
+    });
+  </script>
+</body>
+</html>

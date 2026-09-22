@@ -1,0 +1,19 @@
+[package]
+name = "shadow-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "shadow-cli"
+path = "src/main.rs"
+
+[dependencies]
+shadow-core = { path = "../shadow-core" }
+shadow-injector = { path = "../shadow-injector" }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+windows-sys = { workspace = true }

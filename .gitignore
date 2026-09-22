@@ -1,0 +1,12 @@
+# CodeGraph
+.codegraph/
+
+# Rust build targets
+target/
+bin/
+.cargo/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
