@@ -176,6 +176,7 @@ mod tests {
             upstream_proxy: socks_addr,
             proxy_auth: None,
             strict_dns: true,
+            handshake_timeout: None,
         });
 
         let stats = relay_server.stats();
@@ -234,6 +235,7 @@ mod tests {
                 upstream_proxy: "127.0.0.1:9".parse().unwrap(), // 无效代理地址，直连不应访问它
                 proxy_auth: None,
                 strict_dns: true,
+                handshake_timeout: None,
             },
             router,
             Arc::clone(&tracker),
@@ -288,6 +290,7 @@ mod tests {
                 upstream_proxy: "127.0.0.1:9".parse().unwrap(),
                 proxy_auth: None,
                 strict_dns: true,
+                handshake_timeout: None,
             },
             Arc::new(std::sync::RwLock::new(r)),
             Arc::clone(&tracker),
@@ -312,6 +315,48 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].status, SessionStatus::Blocked);
         assert_eq!(sessions[0].action, RouteAction::Block);
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_relay_slowloris_handshake_timeout() {
+        let relay_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_listener.local_addr().unwrap();
+        drop(relay_listener);
+
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let tracker = Arc::new(SessionTracker::default());
+
+        // 设置极短的 100ms 握手超时以验证防御 Slowloris 慢速拒绝服务
+        let relay_server = RelayServer::with_router_and_tracker(
+            RelayConfig {
+                listen_addr: relay_addr,
+                upstream_proxy: "127.0.0.1:9".parse().unwrap(),
+                proxy_auth: None,
+                strict_dns: true,
+                handshake_timeout: Some(tokio::time::Duration::from_millis(100)),
+            },
+            Arc::new(std::sync::RwLock::new(Router::preset_direct_all())),
+            Arc::clone(&tracker),
+        );
+
+        tokio::spawn(async move {
+            let _ = relay_server.run(shutdown_rx).await;
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // 客户端连接后不发送任何数据
+        let mut client = TcpStream::connect(relay_addr).await.unwrap();
+
+        // 等待超过 100ms 超时时间
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // 预期服务端已因握手超时主动关闭连接 (读取返回 0 EOF)
+        let mut buf = [0u8; 16];
+        let n = client.read(&mut buf).await.unwrap();
+        assert_eq!(n, 0, "慢速无数据连接在超时后必须被服务端强制关闭");
 
         let _ = shutdown_tx.send(());
     }

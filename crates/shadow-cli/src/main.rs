@@ -138,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
         upstream_proxy: upstream_addr,
         proxy_auth,
         strict_dns: args.strict_dns,
+        handshake_timeout: None,
     };
 
     let router = match args.rules.to_lowercase().as_str() {

@@ -13,9 +13,9 @@ use windows_sys::Win32::System::Memory::{
     VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
 };
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, CreateRemoteThread, GetExitCodeThread, IsWow64Process, ResumeThread,
-    WaitForSingleObject, CREATE_NEW_CONSOLE, CREATE_SUSPENDED, LPTHREAD_START_ROUTINE,
-    PROCESS_INFORMATION, STARTUPINFOW,
+    CreateProcessW, CreateRemoteThread, GetExitCodeThread, IsWow64Process,
+    ResumeThread, TerminateProcess, WaitForSingleObject, CREATE_NEW_CONSOLE, CREATE_SUSPENDED,
+    LPTHREAD_START_ROUTINE, PROCESS_INFORMATION, STARTUPINFOW,
 };
 
 #[derive(Error, Debug)]
@@ -95,6 +95,40 @@ impl Drop for HandleGuard {
     fn drop(&mut self) {
         if !self.0.is_null() {
             unsafe { CloseHandle(self.0) };
+        }
+    }
+}
+
+/// 目标挂起进程 RAII 守卫：若在注入完成且主线程恢复执行前发生任何异常或提前返回，
+/// 强制销毁挂起的目标进程，杜绝系统产生不可杀死的永久挂起僵尸进程
+pub struct ProcessGuard {
+    pub handle: HANDLE,
+    disarmed: bool,
+}
+
+impl ProcessGuard {
+    pub fn new(handle: HANDLE) -> Self {
+        Self {
+            handle,
+            disarmed: false,
+        }
+    }
+
+    /// 标记注入与恢复完成，解除异常强制终止保护
+    pub fn disarm(&mut self) {
+        self.disarmed = true;
+    }
+}
+
+impl Drop for ProcessGuard {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            if !self.disarmed {
+                unsafe {
+                    TerminateProcess(self.handle, 1);
+                }
+            }
+            unsafe { CloseHandle(self.handle) };
         }
     }
 }
@@ -214,7 +248,7 @@ pub fn spawn_and_inject_with_args<P: AsRef<Path>>(
             return Err(InjectorError::Win32(GetLastError(), "CreateProcessW"));
         }
 
-        let proc_guard = HandleGuard(pi.hProcess);
+        let mut proc_guard = ProcessGuard::new(pi.hProcess);
         let thread_guard = HandleGuard(pi.hThread);
 
         // 2. 在目标进程空间中分配内存写入 DLL 绝对路径
@@ -295,6 +329,9 @@ pub fn spawn_and_inject_with_args<P: AsRef<Path>>(
         if resume_res == u32::MAX {
             return Err(InjectorError::Win32(GetLastError(), "ResumeThread"));
         }
+
+        // 目标进程已安全恢复运行，解除异常强杀保护
+        proc_guard.disarm();
 
         drop(remote_thread_guard);
         drop(thread_guard);
@@ -522,5 +559,57 @@ mod tests {
 
         let _ = std::fs::remove_file(temp_exe);
         let _ = std::fs::remove_file(dummy_dll);
+    }
+
+    #[test]
+    fn test_process_guard_terminates_suspended_process() {
+        let cmd_path = "C:\\Windows\\System32\\cmd.exe";
+        if !Path::new(cmd_path).exists() {
+            return;
+        }
+
+        let cmd_wide = to_wide_chars(cmd_path);
+        let mut cmdline_wide = to_wide_chars("\"C:\\Windows\\System32\\cmd.exe\"");
+
+        unsafe {
+            let mut si: STARTUPINFOW = std::mem::zeroed();
+            si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+            let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
+
+            let success = CreateProcessW(
+                cmd_wide.as_ptr(),
+                cmdline_wide.as_mut_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                CREATE_SUSPENDED,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                &si,
+                &mut pi,
+            );
+            assert_ne!(success, 0, "启动挂起测试进程失败");
+
+            let h_proc_raw = pi.hProcess;
+            let thread_guard = HandleGuard(pi.hThread);
+
+            // 用作用域模拟注入提前出错导致 ProcessGuard drop
+            {
+                let _proc_guard = ProcessGuard::new(h_proc_raw);
+                // 不调用 disarm()，正常离开作用域自动执行 TerminateProcess + CloseHandle
+            }
+
+            drop(thread_guard);
+
+            // 重新打开进程句柄验证其已被终止 (退出码为 1)
+            use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+            let proc_check = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pi.dwProcessId);
+            if !proc_check.is_null() {
+                let mut exit_code = 0u32;
+                GetExitCodeProcess(proc_check, &mut exit_code);
+                assert_eq!(exit_code, 1, "进程应当已被 TerminateProcess(1) 强制终止");
+                CloseHandle(proc_check);
+            }
+        }
     }
 }

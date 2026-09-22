@@ -9,6 +9,9 @@ use std::sync::{Arc, RwLock};
 use thiserror::Error;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
+use tokio::time::{timeout, Duration};
+
+pub const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Error, Debug)]
 pub enum RelayError {
@@ -38,6 +41,7 @@ pub struct RelayConfig {
     pub upstream_proxy: SocketAddr,
     pub proxy_auth: Option<(String, String)>,
     pub strict_dns: bool,
+    pub handshake_timeout: Option<Duration>,
 }
 
 /// 本地中继服务
@@ -198,8 +202,19 @@ async fn handle_inbound_connection(
     router: Arc<RwLock<Router>>,
     tracker: Arc<SessionTracker>,
 ) -> Result<()> {
-    // 1. 读取本地透明代理帧头（由 shadow-hook 在 connect 拦截时打入）
-    let target = TargetAddr::decode(&mut inbound).await?;
+    let timeout_duration = config.handshake_timeout.unwrap_or(DEFAULT_HANDSHAKE_TIMEOUT);
+
+    // 1. 读取本地透明代理帧头（由 shadow-hook 在 connect 拦截时打入，超时防护防 Slowloris）
+    let target = match timeout(timeout_duration, TargetAddr::decode(&mut inbound)).await {
+        Ok(Ok(target)) => target,
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => {
+            return Err(RelayError::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "读取目标透明代理帧头握手超时",
+            )));
+        }
+    };
     let target_str = target.to_string();
 
     // 2. 路由分流引擎判定
@@ -233,15 +248,21 @@ async fn handle_inbound_connection(
     match decision.action {
         RouteAction::Direct => {
             let connect_res = match &target {
-                TargetAddr::Ip(sa) => TcpStream::connect(*sa).await,
-                TargetAddr::Domain(host, port) => TcpStream::connect((host.as_str(), *port)).await,
+                TargetAddr::Ip(sa) => timeout(timeout_duration, TcpStream::connect(*sa)).await,
+                TargetAddr::Domain(host, port) => {
+                    timeout(timeout_duration, TcpStream::connect((host.as_str(), *port))).await
+                }
             };
 
             let mut outbound = match connect_res {
-                Ok(s) => s,
-                Err(e) => {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
                     tracker.finish_session(session_id, SessionStatus::Failed, 0, 0);
                     return Err(RelayError::DirectConnect(format!("{}: {}", target_str, e)));
+                }
+                Err(_) => {
+                    tracker.finish_session(session_id, SessionStatus::Failed, 0, 0);
+                    return Err(RelayError::DirectConnect(format!("{}: 直连目标超时", target_str)));
                 }
             };
 
@@ -259,18 +280,22 @@ async fn handle_inbound_connection(
             }
         }
         RouteAction::Proxy => {
-            let mut upstream = match TcpStream::connect(config.upstream_proxy).await {
-                Ok(s) => s,
-                Err(e) => {
+            let mut upstream = match timeout(timeout_duration, TcpStream::connect(config.upstream_proxy)).await {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
                     tracker.finish_session(session_id, SessionStatus::Failed, 0, 0);
                     return Err(RelayError::UpstreamConnect(format!("{}: {}", config.upstream_proxy, e)));
+                }
+                Err(_) => {
+                    tracker.finish_session(session_id, SessionStatus::Failed, 0, 0);
+                    return Err(RelayError::UpstreamConnect(format!("{}: 连接上游代理超时", config.upstream_proxy)));
                 }
             };
 
             let auth = config.proxy_auth.as_ref().map(|(u, p)| (u.as_str(), p.as_str()));
-            if let Err(e) = protocol::socks5_connect(&mut upstream, &target, auth).await {
+            if let Err(e) = timeout(timeout_duration, protocol::socks5_connect(&mut upstream, &target, auth)).await {
                 tracker.finish_session(session_id, SessionStatus::Failed, 0, 0);
-                return Err(e.into());
+                return Err(RelayError::UpstreamConnect(format!("上游 SOCKS5 握手超时或失败: {}", e)));
             }
 
             match tokio::io::copy_bidirectional(&mut inbound, &mut upstream).await {

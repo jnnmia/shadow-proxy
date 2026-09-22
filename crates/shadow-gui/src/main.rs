@@ -325,6 +325,7 @@ impl AppState {
             upstream_proxy,
             proxy_auth: None,
             strict_dns,
+            handshake_timeout: None,
         };
 
         let bound = self
