@@ -644,8 +644,16 @@ fn resolve_hook_dll(arch: Architecture) -> anyhow::Result<PathBuf> {
         candidates.push(format!("bin\\{}", name));
         candidates.push(format!("target\\release\\{}", name));
         candidates.push(format!("target\\debug\\{}", name));
-        candidates.push(format!("C:\\Users\\Jnnmi\\.cargo_target\\ghost-proxifier\\release\\{}", name));
-        candidates.push(format!("C:\\Users\\Jnnmi\\.cargo_target\\ghost-proxifier\\debug\\{}", name));
+        if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+            candidates.push(format!("{}\\{}\\{}", target_dir, "release", name));
+            candidates.push(format!("{}\\{}\\{}", target_dir, "debug", name));
+        }
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            candidates.push(format!("{}\\.cargo_target\\shadow-proxy\\release\\{}", home, name));
+            candidates.push(format!("{}\\.cargo_target\\shadow-proxy\\debug\\{}", home, name));
+            candidates.push(format!("{}\\.cargo_target\\ghost-proxifier\\release\\{}", home, name));
+            candidates.push(format!("{}\\.cargo_target\\ghost-proxifier\\debug\\{}", home, name));
+        }
     }
 
     for c in &candidates {
