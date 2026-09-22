@@ -2,9 +2,13 @@
 
 pub mod protocol;
 pub mod relay;
+pub mod router;
+pub mod session;
 
 pub use protocol::{ProtocolError, TargetAddr};
-pub use relay::{RelayConfig, RelayError, RelayServer, TrafficStats};
+pub use relay::{BoundRelayServer, RelayConfig, RelayError, RelayServer, TrafficStats};
+pub use router::{RouteAction, RouteDecision, RuleItem, RulePattern, Router};
+pub use session::{SessionRecord, SessionStatus, SessionTracker};
 
 use thiserror::Error;
 
@@ -26,6 +30,7 @@ pub type Result<T> = std::result::Result<T, CoreError>;
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+    use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::broadcast;
@@ -198,6 +203,115 @@ mod tests {
 
         assert!(stats.bytes_sent.load(std::sync::atomic::Ordering::Relaxed) >= 5);
         assert!(stats.bytes_received.load(std::sync::atomic::Ordering::Relaxed) >= 5);
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_relay_direct_route_roundtrip() {
+        // 1. 直连目标服务端 (Echo Direct Target)
+        let direct_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let direct_addr = direct_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = direct_listener.accept().await.unwrap();
+            let mut buf = [0u8; 6];
+            s.read_exact(&mut buf).await.unwrap();
+            s.write_all(b"DIRECT").await.unwrap();
+        });
+
+        // 2. 启动中继，配置全直连规则
+        let relay_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_listener.local_addr().unwrap();
+        drop(relay_listener);
+
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let router = Arc::new(std::sync::RwLock::new(Router::preset_direct_all()));
+        let tracker = Arc::new(SessionTracker::default());
+
+        let relay_server = RelayServer::with_router_and_tracker(
+            RelayConfig {
+                listen_addr: relay_addr,
+                upstream_proxy: "127.0.0.1:9".parse().unwrap(), // 无效代理地址，直连不应访问它
+                proxy_auth: None,
+                strict_dns: true,
+            },
+            router,
+            Arc::clone(&tracker),
+        );
+
+        tokio::spawn(async move {
+            let _ = relay_server.run(shutdown_rx).await;
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // 3. 客户端发送数据，验证直连成功
+        let mut client = TcpStream::connect(relay_addr).await.unwrap();
+        let target = TargetAddr::Ip(direct_addr);
+        client.write_all(&target.encode()).await.unwrap();
+        client.write_all(b"PINGGG").await.unwrap();
+
+        let mut res = [0u8; 6];
+        client.read_exact(&mut res).await.unwrap();
+        assert_eq!(&res, b"DIRECT");
+
+        client.shutdown().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let sessions = tracker.list_sessions(5);
+        assert!(!sessions.is_empty());
+        assert_eq!(sessions[0].action, RouteAction::Direct);
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_relay_block_route() {
+        let relay_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_listener.local_addr().unwrap();
+        drop(relay_listener);
+
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let mut r = Router::preset_direct_all();
+        r.add_rule(RuleItem {
+            id: "block-8888".into(),
+            name: "阻断 8888 端口".into(),
+            pattern: RulePattern::Port(8888),
+            action: RouteAction::Block,
+            enabled: true,
+        });
+
+        let tracker = Arc::new(SessionTracker::default());
+        let relay_server = RelayServer::with_router_and_tracker(
+            RelayConfig {
+                listen_addr: relay_addr,
+                upstream_proxy: "127.0.0.1:9".parse().unwrap(),
+                proxy_auth: None,
+                strict_dns: true,
+            },
+            Arc::new(std::sync::RwLock::new(r)),
+            Arc::clone(&tracker),
+        );
+
+        tokio::spawn(async move {
+            let _ = relay_server.run(shutdown_rx).await;
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let mut client = TcpStream::connect(relay_addr).await.unwrap();
+        let target = TargetAddr::Ip("127.0.0.1:8888".parse().unwrap());
+        client.write_all(&target.encode()).await.unwrap();
+
+        // 验证连接立即被关闭（读取返回 0 字节 EOF）
+        let mut buf = [0u8; 10];
+        let n = client.read(&mut buf).await.unwrap();
+        assert_eq!(n, 0, "被阻断连接应当直接关闭");
+
+        let sessions = tracker.list_sessions(5);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].status, SessionStatus::Blocked);
+        assert_eq!(sessions[0].action, RouteAction::Block);
 
         let _ = shutdown_tx.send(());
     }

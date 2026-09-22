@@ -17,9 +17,13 @@ use tao::{
 };
 use wry::{DragDropEvent, WebViewBuilder};
 
+use shadow_core::protocol::TargetAddr;
 use shadow_core::relay::{RelayConfig, RelayServer, TrafficStats};
+use shadow_core::router::{RouteAction, RuleItem, RulePattern, Router};
+use shadow_core::session::{SessionRecord, SessionTracker};
 use shadow_injector::{detect_architecture, inject_existing_pid, spawn_and_inject_with_args, Architecture};
 use serde::{Deserialize, Serialize};
+use std::sync::RwLock;
 use tokio::sync::broadcast;
 
 #[derive(Debug)]
@@ -57,6 +61,23 @@ enum IpcCommand {
     },
     #[serde(rename = "delete_preset")]
     DeletePreset { index: usize },
+    #[serde(rename = "add_rule")]
+    AddRule {
+        name: String,
+        pattern_type: String,
+        pattern_val: String,
+        action: String,
+    },
+    #[serde(rename = "delete_rule")]
+    DeleteRule { id: String },
+    #[serde(rename = "toggle_rule")]
+    ToggleRule { id: String, enabled: bool },
+    #[serde(rename = "set_rule_preset")]
+    SetRulePreset { preset: String },
+    #[serde(rename = "clear_sessions")]
+    ClearSessions,
+    #[serde(rename = "ping_upstream")]
+    PingUpstream { proxy: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -92,20 +113,31 @@ struct FullState {
     relay_addr: Option<String>,
     bytes_sent: u64,
     bytes_received: u64,
+    speed_up_bps: u64,
+    speed_down_bps: u64,
     processes: Vec<ProcessInfo>,
     presets: Vec<PresetItem>,
+    rules: Vec<RuleItem>,
+    sessions: Vec<SessionRecord>,
     last_log: Option<String>,
+    ping_ms: Option<u64>,
 }
 
 struct ActiveRelay {
     shutdown_tx: broadcast::Sender<()>,
-    stats: Arc<TrafficStats>,
+    _stats: Arc<TrafficStats>,
     local_addr: SocketAddr,
 }
 
 fn presets_file_path() -> Option<PathBuf> {
     std::env::var("LOCALAPPDATA").ok().map(|appdata| {
         Path::new(&appdata).join("ShadowProxy").join("presets.json")
+    })
+}
+
+fn rules_file_path() -> Option<PathBuf> {
+    std::env::var("LOCALAPPDATA").ok().map(|appdata| {
+        Path::new(&appdata).join("ShadowProxy").join("rules.json")
     })
 }
 
@@ -116,7 +148,10 @@ struct AppState {
     strict_dns: bool,
     processes: Vec<TrackedProcess>,
     presets: Vec<PresetItem>,
+    router: Arc<RwLock<Router>>,
+    tracker: Arc<SessionTracker>,
     last_log: Option<String>,
+    ping_ms: Option<u64>,
 }
 
 impl AppState {
@@ -174,11 +209,86 @@ impl AppState {
         }
     }
 
+    fn load_rules() -> Router {
+        if let Some(path) = rules_file_path() {
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(r) = serde_json::from_str::<Router>(&content) {
+                        return r;
+                    }
+                }
+            }
+        }
+        let default_router = Router::preset_smart();
+        if let Some(path) = rules_file_path() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(json) = serde_json::to_string_pretty(&default_router) {
+                let _ = std::fs::write(&path, json);
+            }
+        }
+        default_router
+    }
+
+    fn save_rules(&self) {
+        if let Some(path) = rules_file_path() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let router = self.router.read().unwrap();
+            if let Ok(json) = serde_json::to_string_pretty(&*router) {
+                let _ = std::fs::write(&path, json);
+            }
+        }
+    }
+
+    fn ping_upstream(&mut self, proxy_str: &str) {
+        let proxy_addr = match proxy_str.parse::<SocketAddr>() {
+            Ok(a) => a,
+            Err(e) => {
+                self.last_log = Some(format!("[PING] 代理地址格式无效: {}", e));
+                self.ping_ms = None;
+                return;
+            }
+        };
+
+        let start = std::time::Instant::now();
+        let res = self.rt.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_millis(3000), async {
+                let mut stream = tokio::net::TcpStream::connect(proxy_addr).await?;
+                let target = TargetAddr::Ip("1.1.1.1:53".parse().unwrap());
+                shadow_core::protocol::socks5_connect(&mut stream, &target, None).await?;
+                Ok::<(), anyhow::Error>(())
+            })
+            .await
+        });
+
+        match res {
+            Ok(Ok(())) => {
+                let ms = start.elapsed().as_millis() as u64;
+                self.ping_ms = Some(ms);
+                self.last_log = Some(format!("[PING] 上游代理握手成功，延迟: {} ms", ms));
+            }
+            Ok(Err(e)) => {
+                self.ping_ms = None;
+                self.last_log = Some(format!("[PING] 代理连接失败: {}", e));
+            }
+            Err(_) => {
+                self.ping_ms = None;
+                self.last_log = Some("[PING] 代理连接超时 (3000ms)".to_string());
+            }
+        }
+    }
+
     fn new() -> anyhow::Result<Self> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
         let presets = Self::load_presets();
+        let router = Arc::new(RwLock::new(Self::load_rules()));
+        let tracker = Arc::new(SessionTracker::new(200));
+
         Ok(Self {
             rt,
             relay: None,
@@ -186,7 +296,10 @@ impl AppState {
             strict_dns: true,
             processes: Vec::new(),
             presets,
+            router,
+            tracker,
             last_log: Some("[SYS] 系统就绪，等待操作".to_string()),
+            ping_ms: None,
         })
     }
 
@@ -214,7 +327,12 @@ impl AppState {
 
         let bound = self
             .rt
-            .block_on(RelayServer::bind(config))
+            .block_on(RelayServer::bind_with_components(
+                config,
+                Arc::new(TrafficStats::default()),
+                Arc::clone(&self.router),
+                Arc::clone(&self.tracker),
+            ))
             .map_err(|e| format!("绑定本地透明中继失败: {}", e))?;
 
         let local_addr = bound.local_addr();
@@ -234,7 +352,7 @@ impl AppState {
 
         self.relay = Some(ActiveRelay {
             shutdown_tx,
-            stats,
+            _stats: stats,
             local_addr,
         });
         self.upstream_proxy = proxy_str.to_string();
@@ -518,15 +636,9 @@ impl AppState {
     }
 
     fn get_full_state(&self) -> FullState {
-        let (bytes_sent, bytes_received) = if let Some(ref r) = self.relay {
-            (
-                r.stats
-                    .bytes_sent
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                r.stats
-                    .bytes_received
-                    .load(std::sync::atomic::Ordering::Relaxed),
-            )
+        let (speed_up_bps, speed_down_bps, total_up, total_down) = self.tracker.speed_and_totals();
+        let (bytes_sent, bytes_received) = if self.relay.is_some() {
+            (total_up, total_down)
         } else {
             (0, 0)
         };
@@ -544,14 +656,22 @@ impl AppState {
             })
             .collect();
 
+        let rules = self.router.read().unwrap().rules.clone();
+        let sessions = self.tracker.list_sessions(60);
+
         FullState {
             relay_active: self.relay.is_some(),
             relay_addr: self.relay.as_ref().map(|r| r.local_addr.to_string()),
             bytes_sent,
             bytes_received,
+            speed_up_bps,
+            speed_down_bps,
             processes: procs,
             presets: self.presets.clone(),
+            rules,
+            sessions,
             last_log: self.last_log.clone(),
+            ping_ms: self.ping_ms,
         }
     }
 }
@@ -892,6 +1012,128 @@ fn main() -> anyhow::Result<()> {
                                     state.save_presets();
                                     state.last_log = Some(format!("[PRESET] 已删除快捷预设: {}", removed.name));
                                 }
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::AddRule { name, pattern_type, pattern_val, action } => {
+                                let act = match action.to_lowercase().as_str() {
+                                    "direct" => RouteAction::Direct,
+                                    "block" => RouteAction::Block,
+                                    _ => RouteAction::Proxy,
+                                };
+                                let pat = match pattern_type.to_lowercase().as_str() {
+                                    "domain_suffix" => RulePattern::DomainSuffix(pattern_val.trim_start_matches('.').to_string()),
+                                    "domain_keyword" => RulePattern::DomainKeyword(pattern_val),
+                                    "domain_exact" => RulePattern::DomainExact(pattern_val),
+                                    "ip_cidr" => {
+                                        let parts: Vec<&str> = pattern_val.split('/').collect();
+                                        let ip = parts[0].trim().to_string();
+                                        let prefix_len = parts.get(1).and_then(|p| p.trim().parse::<u8>().ok()).unwrap_or(32);
+                                        RulePattern::IpCidr { ip, prefix_len }
+                                    }
+                                    "port" => {
+                                        let p = pattern_val.trim().parse::<u16>().unwrap_or(80);
+                                        RulePattern::Port(p)
+                                    }
+                                    "port_range" => {
+                                        let clean = pattern_val.replace("..", "-");
+                                        let parts: Vec<&str> = clean.split('-').collect();
+                                        let start = parts[0].trim().parse::<u16>().unwrap_or(1);
+                                        let end = parts.get(1).and_then(|p| p.trim().parse::<u16>().ok()).unwrap_or(start);
+                                        RulePattern::PortRange { start, end }
+                                    }
+                                    _ => RulePattern::Final,
+                                };
+                                let rule_id = format!("rule-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+                                {
+                                    let mut router = state.router.write().unwrap();
+                                    router.add_rule(RuleItem {
+                                        id: rule_id,
+                                        name: name.clone(),
+                                        pattern: pat,
+                                        action: act,
+                                        enabled: true,
+                                    });
+                                }
+                                state.save_rules();
+                                state.last_log = Some(format!("[RULE] 已新增分流规则: {}", name));
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::DeleteRule { id } => {
+                                {
+                                    let mut router = state.router.write().unwrap();
+                                    router.remove_rule(&id);
+                                }
+                                state.save_rules();
+                                state.last_log = Some("[RULE] 已删除分流规则".to_string());
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::ToggleRule { id, enabled } => {
+                                {
+                                    let mut router = state.router.write().unwrap();
+                                    router.set_rule_enabled(&id, enabled);
+                                }
+                                state.save_rules();
+                                state.last_log = Some(format!("[RULE] 规则状态已更新 (启用={})", enabled));
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::SetRulePreset { preset } => {
+                                let new_router = match preset.to_lowercase().as_str() {
+                                    "smart" => Router::preset_smart(),
+                                    "global" | "global_proxy" => Router::preset_global_proxy(),
+                                    "direct" | "direct_all" => Router::preset_direct_all(),
+                                    _ => Router::preset_smart(),
+                                };
+                                {
+                                    let mut router = state.router.write().unwrap();
+                                    *router = new_router;
+                                }
+                                state.save_rules();
+                                state.last_log = Some(format!("[RULE] 已切换分流预设为: {}", preset));
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::ClearSessions => {
+                                state.tracker.clear();
+                                state.last_log = Some("[SESSION] 实时连接历史已清空".to_string());
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::PingUpstream { proxy } => {
+                                state.ping_upstream(&proxy);
                                 let full = state.get_full_state();
                                 if let Ok(json) = serde_json::to_string(&full) {
                                     let _ = webview.evaluate_script(&format!(

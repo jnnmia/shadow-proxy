@@ -1899,6 +1899,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "serde_json",
  "shadow-core",
  "shadow-injector",
  "tokio",
@@ -1913,6 +1914,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "tokio",
  "tokio-socks",

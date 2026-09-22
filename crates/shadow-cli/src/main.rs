@@ -50,6 +50,10 @@ struct Args {
     /// 上游 SOCKS5 认证密码
     #[arg(long)]
     password: Option<String>,
+
+    /// 路由分流规则预设 (smart / global / direct) 或 JSON 规则文件路径
+    #[arg(long, default_value = "smart")]
+    rules: String,
 }
 
 fn resolve_hook_dll(arch: Architecture, explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
@@ -136,10 +140,32 @@ async fn main() -> anyhow::Result<()> {
         strict_dns: args.strict_dns,
     };
 
+    let router = match args.rules.to_lowercase().as_str() {
+        "smart" => shadow_core::router::Router::preset_smart(),
+        "global" | "global_proxy" => shadow_core::router::Router::preset_global_proxy(),
+        "direct" | "direct_all" => shadow_core::router::Router::preset_direct_all(),
+        path => {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                serde_json::from_str(&content)
+                    .map_err(|e| anyhow::anyhow!("规则文件 JSON 格式错误: {}", e))?
+            } else {
+                anyhow::bail!("未知的路由预设或不存在的规则文件: {}", path);
+            }
+        }
+    };
+
+    let router = std::sync::Arc::new(std::sync::RwLock::new(router));
+    let tracker = std::sync::Arc::new(shadow_core::session::SessionTracker::default());
     let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
 
     // 启动本地透明代理中继服务
-    let bound_server = RelayServer::bind(relay_config).await?;
+    let bound_server = RelayServer::bind_with_components(
+        relay_config,
+        std::sync::Arc::new(shadow_core::relay::TrafficStats::default()),
+        std::sync::Arc::clone(&router),
+        std::sync::Arc::clone(&tracker),
+    )
+    .await?;
     let local_relay_addr = bound_server.local_addr();
     let stats = bound_server.stats();
 
@@ -151,6 +177,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("本地透明中继就绪: {}", local_relay_addr);
     tracing::info!("上游代理目标: {}", upstream_addr);
+    tracing::info!("路由分流预设: {}", args.rules);
     tracing::info!("严格 DNS 防泄漏: {}", args.strict_dns);
 
     // 传递控制环境变量给被注入进程 (兼容 SHADOW_* 与历史 GHOST_*)

@@ -862,6 +862,126 @@
     .highlight-flash {
       animation: flash-glow 0.8s ease-out;
     }
+
+    /* 过滤器按钮组 */
+    .filter-group {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .btn-filter {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      border-radius: var(--radius-sm);
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-filter:hover {
+      color: var(--text-primary);
+      border-color: var(--border-hover);
+    }
+    .btn-filter.active {
+      background: var(--cyan-dim);
+      border-color: rgba(57, 197, 187, 0.4);
+      color: var(--cyan-neon);
+      font-weight: 600;
+    }
+
+    /* 决策动作徽标 */
+    .badge-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      font-family: var(--code-font);
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      text-transform: uppercase;
+    }
+    .badge-action-proxy {
+      background: var(--blue-dim);
+      border: 1px solid rgba(88, 166, 255, 0.35);
+      color: var(--blue-accent);
+    }
+    .badge-action-direct {
+      background: var(--green-dim);
+      border: 1px solid rgba(63, 185, 80, 0.35);
+      color: var(--green-live);
+    }
+    .badge-action-block {
+      background: var(--red-dim);
+      border: 1px solid rgba(248, 81, 73, 0.35);
+      color: var(--red-accent);
+    }
+
+    /* 会话状态徽标 */
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10.5px;
+      font-family: var(--code-font);
+      padding: 2px 7px;
+      border-radius: 10px;
+    }
+    .badge-status-active {
+      background: rgba(57, 197, 187, 0.15);
+      color: var(--cyan-neon);
+      border: 1px solid rgba(57, 197, 187, 0.3);
+    }
+    .badge-status-closed {
+      background: rgba(139, 148, 158, 0.12);
+      color: var(--text-muted);
+      border: 1px solid var(--border-subtle);
+    }
+    .badge-status-blocked {
+      background: var(--red-dim);
+      color: var(--red-accent);
+      border: 1px solid rgba(248, 81, 73, 0.3);
+    }
+    .badge-status-failed {
+      background: rgba(248, 81, 73, 0.12);
+      color: #ff7b72;
+      border: 1px solid rgba(248, 81, 73, 0.2);
+    }
+
+    /* 规则添加表单 */
+    .rule-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+    .rule-form-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .rule-form-row input, .rule-form-row select {
+      height: 32px;
+      font-size: 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      padding: 0 8px;
+    }
+    .rule-form-row input:focus, .rule-form-row select:focus {
+      border-color: var(--border-focus);
+      outline: none;
+    }
+    .speed-tag {
+      font-size: 10.5px;
+      color: var(--text-muted);
+      font-family: var(--code-font);
+      margin-top: 3px;
+    }
   </style>
 </head>
 <body>
@@ -893,6 +1013,14 @@
           </div>
         </div>
 
+        <div class="nav-item" data-view="view-connections" onclick="switchNav('view-connections')">
+          <div class="nav-item-left">
+            <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <span class="nav-item-title">实时连接</span>
+          </div>
+          <span id="navConnBadge" class="nav-badge">0</span>
+        </div>
+
         <div class="nav-item" data-view="view-presets" onclick="switchNav('view-presets')">
           <div class="nav-item-left">
             <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
@@ -910,6 +1038,14 @@
         </div>
 
         <div class="nav-label" style="margin-top: 6px;">网络配置</div>
+
+        <div class="nav-item" data-view="view-rules" onclick="switchNav('view-rules')">
+          <div class="nav-item-left">
+            <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>
+            <span class="nav-item-title">分流规则</span>
+          </div>
+          <span id="navRuleBadge" class="nav-badge">0</span>
+        </div>
 
         <div class="nav-item" data-view="view-relay" onclick="switchNav('view-relay')">
           <div class="nav-item-left">
@@ -936,6 +1072,7 @@
               TX 发送
             </span>
             <span id="txBytes" class="meter-val">0 B</span>
+            <span id="txSpeed" class="speed-tag">0 B/s</span>
             <div id="txPulse" class="meter-pulse"></div>
           </div>
           <div class="meter-tile">
@@ -944,6 +1081,7 @@
               RX 接收
             </span>
             <span id="rxBytes" class="meter-val">0 B</span>
+            <span id="rxSpeed" class="speed-tag">0 B/s</span>
             <div id="rxPulse" class="meter-pulse" style="background: var(--blue-accent);"></div>
           </div>
         </div>
@@ -1067,6 +1205,113 @@
         </div>
       </section>
 
+      <!-- 视图: 实时连接会话监控 -->
+      <section id="view-connections" class="view-pane">
+        <div class="view-header">
+          <div class="view-title-group">
+            <h1 class="view-title">实时连接会话监控</h1>
+            <p class="view-desc">被注入进程发起的全部网络连接遥测、规则决策判定与流量统计</p>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <div class="filter-group">
+              <button class="btn-filter active" id="filterAll" onclick="setSessionFilter('all')">全部 (<span id="countConnAll">0</span>)</button>
+              <button class="btn-filter" id="filterProxy" onclick="setSessionFilter('proxy')">代理 (<span id="countConnProxy">0</span>)</button>
+              <button class="btn-filter" id="filterDirect" onclick="setSessionFilter('direct')">直连 (<span id="countConnDirect">0</span>)</button>
+              <button class="btn-filter" id="filterBlock" onclick="setSessionFilter('block')">阻断 (<span id="countConnBlock">0</span>)</button>
+            </div>
+            <button type="button" class="btn-secondary" onclick="clearSessions()" style="padding: 4px 10px; font-size: 11px;">清空历史</button>
+          </div>
+        </div>
+
+        <div class="table-viewport">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 75px;">时间</th>
+                <th>目标地址</th>
+                <th>命中规则</th>
+                <th style="width: 85px;">分流决策</th>
+                <th style="width: 85px;">传输状态</th>
+                <th style="width: 80px;">上传</th>
+                <th style="width: 80px;">下载</th>
+                <th style="width: 75px; text-align: right;">耗时</th>
+              </tr>
+            </thead>
+            <tbody id="connTableBody">
+              <tr>
+                <td colspan="8" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+                  暂无捕获连接。启动透明代理并运行目标程序后在此实时滚屏。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 视图: 多条件分流规则引擎 -->
+      <section id="view-rules" class="view-pane">
+        <div class="view-header">
+          <div class="view-title-group">
+            <h1 class="view-title">多条件分流规则引擎</h1>
+            <p class="view-desc">支持基于域名后缀/关键词/全等、IPv4-CIDR 及端口范围自定义分流策略</p>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <button type="button" class="btn-secondary" onclick="setPreset('smart')" style="padding: 4px 9px; font-size: 11px;">智能分流</button>
+            <button type="button" class="btn-secondary" onclick="setPreset('global')" style="padding: 4px 9px; font-size: 11px;">全局代理</button>
+            <button type="button" class="btn-secondary" onclick="setPreset('direct')" style="padding: 4px 9px; font-size: 11px;">全部直连</button>
+          </div>
+        </div>
+
+        <!-- 规则添加卡片 -->
+        <div class="rule-card">
+          <div style="font-size: 11.5px; font-weight: 700; color: var(--text-primary); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
+            添加分流规则
+          </div>
+          <div class="rule-form-row">
+            <input type="text" id="newRuleName" placeholder="规则名称 (如: 代理 GitHub)" style="flex: 1.2; min-width: 140px;" />
+            <select id="newRuleType" style="flex: 1.2; min-width: 150px;">
+              <option value="domain_suffix">域名后缀 (如: cn, baidu.com)</option>
+              <option value="domain_keyword">域名关键词 (如: google, github)</option>
+              <option value="domain_exact">域名全等</option>
+              <option value="ip_cidr">IPv4-CIDR (如: 192.168.0.0/16)</option>
+              <option value="port">目标单端口 (如: 80, 443)</option>
+              <option value="port_range">目标端口范围 (如: 8000-9000)</option>
+            </select>
+            <input type="text" id="newRuleVal" placeholder="匹配表达式" style="flex: 1.5; min-width: 140px;" />
+            <select id="newRuleAction" style="flex: 1; min-width: 110px;">
+              <option value="proxy">走代理 (PROXY)</option>
+              <option value="direct">本地直连 (DIRECT)</option>
+              <option value="block">安全阻断 (BLOCK)</option>
+            </select>
+            <button type="button" class="btn-primary" onclick="submitAddRule()" style="height: 32px; padding: 0 14px; font-size: 12px;">
+              添加
+            </button>
+          </div>
+        </div>
+
+        <!-- 规则表格 -->
+        <div class="table-viewport">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 50px; text-align: center;">启用</th>
+                <th>规则名称</th>
+                <th>匹配条件</th>
+                <th style="width: 110px;">执行动作</th>
+                <th style="width: 70px; text-align: center;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="rulesTableBody">
+              <tr>
+                <td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+                  加载规则列表中...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <!-- 视图 4: 网络中继与 DNS -->
       <section id="view-relay" class="view-pane">
         <div class="view-header">
@@ -1089,7 +1334,11 @@
 
           <div class="form-row">
             <span class="form-label">上游代理地址 (IP:Port)</span>
-            <input type="text" id="upstreamProxy" value="127.0.0.1:7897" placeholder="127.0.0.1:7897" />
+            <div style="display: flex; gap: 8px; flex: 1;">
+              <input type="text" id="upstreamProxy" value="127.0.0.1:7897" placeholder="127.0.0.1:7897" style="flex: 1;" />
+              <button type="button" class="btn-secondary" onclick="pingUpstream()" style="white-space: nowrap; height: 32px; padding: 0 12px; font-size: 12px;">测试延迟</button>
+              <span id="pingBadge" class="badge-tag" style="align-self: center; display: none;">- ms</span>
+            </div>
           </div>
 
           <div class="form-row">
@@ -1141,6 +1390,9 @@
     let isRelayRunning = false;
     let lastBytesSent = 0;
     let lastBytesReceived = 0;
+    let currentSessionFilter = 'all';
+    let currentSessions = [];
+    let currentRules = [];
 
     function sendIpc(cmd, payload = {}) {
       const msg = JSON.stringify({ cmd, ...payload });
@@ -1194,15 +1446,394 @@
       }
     }
 
+    function pingUpstream() {
+      const proxy = document.getElementById("upstreamProxy").value.trim();
+      if (!proxy) {
+        log("[PING] 请先输入上游代理地址");
+        return;
+      }
+      const badge = document.getElementById("pingBadge");
+      if (badge) {
+        badge.style.display = "inline-block";
+        badge.innerText = "测速中...";
+        badge.style.color = "var(--text-muted)";
+      }
+      sendIpc("ping_upstream", { proxy });
+      log("正在测试上游代理 " + proxy + " 延迟...");
+    }
+
+    function setSessionFilter(filter) {
+      currentSessionFilter = filter;
+      document.querySelectorAll(".filter-group .btn-filter").forEach(b => {
+        b.classList.remove("active");
+      });
+      const btnMap = {
+        all: "filterAll",
+        proxy: "filterProxy",
+        direct: "filterDirect",
+        block: "filterBlock"
+      };
+      const activeBtn = document.getElementById(btnMap[filter]);
+      if (activeBtn) activeBtn.classList.add("active");
+      renderSessions();
+    }
+
+    function clearSessions() {
+      sendIpc("clear_sessions");
+      currentSessions = [];
+      renderSessions();
+    }
+
+    function renderSessions() {
+      const tbody = document.getElementById("connTableBody");
+      if (!tbody) return;
+
+      const totalAll = currentSessions.length;
+      const totalProxy = currentSessions.filter(s => s.action.toLowerCase() === 'proxy').length;
+      const totalDirect = currentSessions.filter(s => s.action.toLowerCase() === 'direct').length;
+      const totalBlock = currentSessions.filter(s => s.action.toLowerCase() === 'block').length;
+
+      const cAll = document.getElementById("countConnAll");
+      const cProxy = document.getElementById("countConnProxy");
+      const cDirect = document.getElementById("countConnDirect");
+      const cBlock = document.getElementById("countConnBlock");
+      const navBadge = document.getElementById("navConnBadge");
+
+      if (cAll) cAll.innerText = totalAll;
+      if (cProxy) cProxy.innerText = totalProxy;
+      if (cDirect) cDirect.innerText = totalDirect;
+      if (cBlock) cBlock.innerText = totalBlock;
+      if (navBadge) navBadge.innerText = totalAll;
+
+      const filtered = currentSessions.filter(s => {
+        if (currentSessionFilter === 'all') return true;
+        return s.action.toLowerCase() === currentSessionFilter;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="8" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+              ${totalAll === 0 ? "暂无捕获连接。启动透明代理并运行目标程序后在此实时滚屏。" : "该分类下暂无活动连接。"}
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      let html = "";
+      for (const s of filtered) {
+        const actLower = s.action.toLowerCase();
+        const statLower = s.status.toLowerCase();
+        const durationSec = ((s.duration_ms || 0) / 1000).toFixed(1);
+
+        html += `
+          <tr>
+            <td style="font-family: var(--code-font); color: var(--text-muted);">${s.time_str || '-'}</td>
+            <td style="font-weight: 600; color: var(--text-primary);" title="${s.target}">${s.target}</td>
+            <td style="color: var(--text-muted); font-size: 11.5px;">${s.rule_name || '-'}</td>
+            <td><span class="badge-action badge-action-${actLower}">${s.action}</span></td>
+            <td><span class="badge-status badge-status-${statLower}">${s.status}</span></td>
+            <td style="font-family: var(--code-font);">${formatBytes(s.upload_bytes)}</td>
+            <td style="font-family: var(--code-font);">${formatBytes(s.download_bytes)}</td>
+            <td style="text-align: right; font-family: var(--code-font); color: var(--text-muted);">${durationSec}s</td>
+          </tr>
+        `;
+      }
+      tbody.innerHTML = html;
+    }
+
+    function formatPatternText(pat) {
+      if (!pat) return "-";
+      if (pat.type === "domain_suffix") return "*." + pat.value;
+      if (pat.type === "domain_keyword") return "Keyword(" + pat.value + ")";
+      if (pat.type === "domain_exact") return "Exact(" + pat.value + ")";
+      if (pat.type === "ip_cidr") return pat.value.ip + "/" + pat.value.prefix_len;
+      if (pat.type === "port") return "Port(" + pat.value + ")";
+      if (pat.type === "port_range") return "Port(" + pat.value.start + "-" + pat.value.end + ")";
+      if (pat.type === "final") return "FINAL (默认保底)";
+      return JSON.stringify(pat);
+    }
+
+    function renderRules(rules) {
+      const tbody = document.getElementById("rulesTableBody");
+      const navBadge = document.getElementById("navRuleBadge");
+      if (navBadge) navBadge.innerText = rules.length;
+      if (!tbody) return;
+
+      if (rules.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+              暂无配置规则。点击上方预设或添加新规则。
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      let html = "";
+      for (const r of rules) {
+        const isFinal = r.pattern && r.pattern.type === "final";
+        const patDesc = formatPatternText(r.pattern);
+        const actLower = (r.action || "proxy").toLowerCase();
+        const actionBtn = isFinal 
+          ? `<span style="color: var(--text-subtle); font-size: 11px;">系统内置</span>`
+          : `<button class="btn-terminate" onclick="deleteRule('${r.id}')">删除</button>`;
+
+        html += `
+          <tr>
+            <td style="text-align: center;">
+              <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleRule('${r.id}', this.checked)" style="accent-color: var(--cyan-neon); cursor: pointer;" />
+            </td>
+            <td style="font-weight: 600; color: ${r.enabled ? 'var(--text-primary)' : 'var(--text-subtle)'};">${r.name}</td>
+            <td style="font-family: var(--code-font); color: var(--cyan-neon); font-size: 11.5px;">${patDesc}</td>
+            <td><span class="badge-action badge-action-${actLower}">${(r.action || 'PROXY').toUpperCase()}</span></td>
+            <td style="text-align: center;">${actionBtn}</td>
+          </tr>
+        `;
+      }
+      tbody.innerHTML = html;
+    }
+
+    function submitAddRule() {
+      const nameInput = document.getElementById("newRuleName");
+      const typeInput = document.getElementById("newRuleType");
+      const valInput = document.getElementById("newRuleVal");
+      const actionInput = document.getElementById("newRuleAction");
+
+      const name = nameInput.value.trim();
+      const pattern_type = typeInput.value;
+      const pattern_val = valInput.value.trim();
+      const action = actionInput.value;
+
+      if (!name) {
+        log("[错误] 请填写规则名称");
+        nameInput.focus();
+        return;
+      }
+      if (!pattern_val && pattern_type !== "final") {
+        log("[错误] 请填写匹配表达式/值");
+        valInput.focus();
+        return;
+      }
+
+      sendIpc("add_rule", { name, pattern_type, pattern_val, action });
+      nameInput.value = "";
+      valInput.value = "";
+      log("已提交新增规则: " + name);
+    }
+
+    function deleteRule(id) {
+      sendIpc("delete_rule", { id });
+      log("已发送删除规则请求");
+    }
+
+    function toggleRule(id, enabled) {
+      sendIpc("toggle_rule", { id, enabled });
+      log("已更新规则状态 (启用=" + enabled + ")");
+    }
+
+    function setPreset(preset) {
+      sendIpc("set_rule_preset", { preset });
+      log("正在应用规则预设: " + preset);
+    }
+
     function browseFile() {
       sendIpc("browse_file");
     }
 
-    /* 智能图标匹配生成器 */
+    function killProcess(pid) {
+      sendIpc("kill_process", { pid });
+      log("已发送终止指令至 PID " + pid);
+    }
+
+    // 拖拽捕获反馈
+    const dropZone = document.getElementById("dropZone");
+    if (dropZone) {
+      ['dragenter', 'dragover'].forEach(name => {
+        dropZone.addEventListener(name, (e) => {
+          e.preventDefault();
+          dropZone.classList.add('dragover');
+        }, false);
+      });
+      ['dragleave', 'drop'].forEach(name => {
+        dropZone.addEventListener(name, (e) => {
+          e.preventDefault();
+          dropZone.classList.remove('dragover');
+        }, false);
+      });
+    }
+
+    window.updateDroppedFile = function(path, args) {
+      const pathInput = document.getElementById("targetPath");
+      const argsInput = document.getElementById("targetArgs");
+      if (pathInput) pathInput.value = path;
+      if (argsInput && args && args.trim().length > 0) {
+        argsInput.value = args.trim();
+      }
+      switchNav("view-inject");
+      flashInput(pathInput);
+      log("已拖入加载程序: " + path + (args && args.trim().length > 0 ? (" [参数: " + args.trim() + "]") : ""));
+    };
+
+    window.updateState = function(state) {
+      isRelayRunning = state.relay_active;
+      const chip = document.getElementById("relayStatusChip");
+      const statusText = document.getElementById("relayStatusText");
+      const btnRelay = document.getElementById("btnRelayToggle");
+      const localListen = document.getElementById("localListen");
+
+      if (isRelayRunning) {
+        if (chip) chip.className = "relay-status-chip active";
+        if (statusText) statusText.innerText = "ONLINE";
+        if (btnRelay) {
+          btnRelay.innerText = "停止中继";
+          btnRelay.className = "btn-danger";
+        }
+        const addr = state.relay_addr || "127.0.0.1:0";
+        if (localListen) localListen.value = addr;
+      } else {
+        if (chip) chip.className = "relay-status-chip";
+        if (statusText) statusText.innerText = "OFFLINE";
+        if (btnRelay) {
+          btnRelay.innerText = "启动中继";
+          btnRelay.className = "btn-secondary";
+        }
+        if (localListen) localListen.value = "动态分配 (待启动)";
+      }
+
+      // 流量与瞬时速率 HUD
+      const sent = state.bytes_sent || 0;
+      const recv = state.bytes_received || 0;
+      const txEl = document.getElementById("txBytes");
+      const rxEl = document.getElementById("rxBytes");
+      const txSp = document.getElementById("txSpeed");
+      const rxSp = document.getElementById("rxSpeed");
+
+      if (txEl) txEl.innerText = formatBytes(sent);
+      if (rxEl) rxEl.innerText = formatBytes(recv);
+      if (txSp) txSp.innerText = formatBytes(state.speed_up_bps || 0) + "/s";
+      if (rxSp) rxSp.innerText = formatBytes(state.speed_down_bps || 0) + "/s";
+
+      const txPulse = document.getElementById("txPulse");
+      const rxPulse = document.getElementById("rxPulse");
+      if (txPulse && sent > lastBytesSent) {
+        txPulse.style.width = "100%";
+        setTimeout(() => { txPulse.style.width = "0%"; }, 400);
+      }
+      if (rxPulse && recv > lastBytesReceived) {
+        rxPulse.style.width = "100%";
+        setTimeout(() => { rxPulse.style.width = "0%"; }, 400);
+      }
+      lastBytesSent = sent;
+      lastBytesReceived = recv;
+
+      // 延迟测速反馈
+      const pingBadge = document.getElementById("pingBadge");
+      if (pingBadge && state.ping_ms !== undefined && state.ping_ms !== null) {
+        pingBadge.style.display = "inline-block";
+        pingBadge.innerText = state.ping_ms + " ms";
+        if (state.ping_ms < 100) {
+          pingBadge.style.color = "var(--green-live)";
+          pingBadge.style.borderColor = "rgba(63, 185, 80, 0.4)";
+        } else if (state.ping_ms < 300) {
+          pingBadge.style.color = "var(--cyan-neon)";
+          pingBadge.style.borderColor = "rgba(57, 197, 187, 0.4)";
+        } else {
+          pingBadge.style.color = "var(--red-accent)";
+          pingBadge.style.borderColor = "rgba(248, 81, 73, 0.4)";
+        }
+      }
+
+      // 会话列表同步
+      if (Array.isArray(state.sessions)) {
+        currentSessions = state.sessions;
+        renderSessions();
+      }
+
+      // 分流规则列表同步
+      if (Array.isArray(state.rules)) {
+        currentRules = state.rules;
+        renderRules(currentRules);
+      }
+
+      // 托管进程列表渲染
+      const tbody = document.getElementById("procTableBody");
+      const procs = state.processes || [];
+      const procBadge = document.getElementById("navProcBadge");
+      const procSummaryBadge = document.getElementById("procSummaryBadge");
+      
+      const runningCount = procs.filter(p => p.running).length;
+      if (procBadge) procBadge.innerText = runningCount;
+      if (procSummaryBadge) procSummaryBadge.innerText = `${runningCount} / ${procs.length} 个进程运行中`;
+
+      if (tbody) {
+        if (procs.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+                暂无托管进程。进入“进程注入”或“常用快捷”启动目标程序。
+              </td>
+            </tr>
+          `;
+        } else {
+          let html = "";
+          for (const p of procs) {
+            const isX86 = (p.arch || "").toLowerCase().includes("86") && !(p.arch || "").toLowerCase().includes("64");
+            const archClass = isX86 ? "badge-arch badge-arch-x86" : "badge-arch";
+            const statusClass = p.running ? "status-tag running" : "status-tag exited";
+            const statusDesc = p.running ? "RUNNING" : "EXITED (" + p.exit_code + ")";
+            const actionBtn = p.running 
+              ? `<button class="btn-terminate" onclick="killProcess(${p.pid})">终止</button>` 
+              : `<span style="color: var(--text-subtle); font-size: 11px;">已注销</span>`;
+
+            html += `
+              <tr>
+                <td>${p.pid}</td>
+                <td title="${p.path}"><strong>${p.name}</strong> <span style="font-size: 10.5px; color: var(--text-muted); margin-left: 4px;">${p.path !== p.name ? p.path : ""}</span></td>
+                <td><span class="${archClass}">${p.arch}</span></td>
+                <td><span class="${statusClass}"><span class="status-dot" style="background: currentColor; width: 6px; height: 6px;"></span>${statusDesc}</span></td>
+                <td style="text-align: center;">${actionBtn}</td>
+              </tr>
+            `;
+          }
+          tbody.innerHTML = html;
+        }
+      }
+
+      // 常用预设列表同步
+      if (Array.isArray(state.presets)) {
+        const presetsJson = JSON.stringify(state.presets);
+        if (presetsJson !== lastPresetsJson) {
+          lastPresetsJson = presetsJson;
+          currentPresets = state.presets;
+          renderPresets(currentPresets);
+        }
+      }
+
+      if (state.last_log) {
+        log(state.last_log);
+      }
+    };
+
+    let currentPresets = [];
+    let lastPresetsJson = "";
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
     function getAppIconSvg(name, target) {
       const lowerName = (name + " " + target).toLowerCase();
       
-      // 1. Antigravity: 专属 AI 双立方体发光渐变 SVG
+      // 1. Antigravity 专属图标
       if (lowerName.includes("antigravity")) {
         return `
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -1267,18 +1898,11 @@
       `;
     }
 
-    /* 常用预设持久化与管理（统一由 Rust 后端持久化至 %LOCALAPPDATA%\ShadowProxy\presets.json） */
-    let currentPresets = [];
-    let lastPresetsJson = "";
-
-    function escapeHtml(str) {
-      if (!str) return "";
-      return String(str)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+    function flashInput(el) {
+      if (!el) return;
+      el.classList.remove("highlight-flash");
+      void el.offsetWidth;
+      el.classList.add("highlight-flash");
     }
 
     function renderPresets(presets = currentPresets) {
@@ -1380,13 +2004,6 @@
       switchNav("view-presets");
     }
 
-    function flashInput(el) {
-      if (!el) return;
-      el.classList.remove("highlight-flash");
-      void el.offsetWidth;
-      el.classList.add("highlight-flash");
-    }
-
     function launchProcess(overrideTarget = null, overrideArgs = null) {
       let target = overrideTarget !== null ? overrideTarget : document.getElementById("targetPath").value.trim();
       let args = overrideArgs !== null ? overrideArgs : document.getElementById("targetArgs").value.trim();
@@ -1397,6 +2014,7 @@
           document.getElementById("targetPath").value = target;
         } else {
           log("[错误] 请输入或选择目标程序路径");
+          flashInput(document.getElementById("targetPath"));
           return;
         }
       }
@@ -1431,146 +2049,6 @@
       flashInput(document.getElementById("targetPath"));
       launchProcess(curlPath, curlArgs);
     }
-
-    function killProcess(pid) {
-      sendIpc("kill_process", { pid });
-      log("已发送终止指令至 PID " + pid);
-    }
-
-    // 拖拽捕获反馈
-    const dropZone = document.getElementById("dropZone");
-    if (dropZone) {
-      ['dragenter', 'dragover'].forEach(name => {
-        dropZone.addEventListener(name, (e) => {
-          e.preventDefault();
-          dropZone.classList.add('dragover');
-        }, false);
-      });
-      ['dragleave', 'drop'].forEach(name => {
-        dropZone.addEventListener(name, (e) => {
-          e.preventDefault();
-          dropZone.classList.remove('dragover');
-        }, false);
-      });
-    }
-
-    window.updateDroppedFile = function(path, args) {
-      const pathInput = document.getElementById("targetPath");
-      const argsInput = document.getElementById("targetArgs");
-      if (pathInput) pathInput.value = path;
-      if (argsInput && args && args.trim().length > 0) {
-        argsInput.value = args.trim();
-      }
-      switchNav("view-inject");
-      flashInput(pathInput);
-      log("已拖入加载程序: " + path + (args && args.trim().length > 0 ? (" [参数: " + args.trim() + "]") : ""));
-    };
-
-    window.updateState = function(state) {
-      isRelayRunning = state.relay_active;
-      const chip = document.getElementById("relayStatusChip");
-      const statusText = document.getElementById("relayStatusText");
-      const btnRelay = document.getElementById("btnRelayToggle");
-      const localListen = document.getElementById("localListen");
-
-      if (isRelayRunning) {
-        if (chip) chip.className = "relay-status-chip active";
-        if (statusText) statusText.innerText = "ONLINE";
-        if (btnRelay) {
-          btnRelay.innerText = "停止中继";
-          btnRelay.className = "btn-danger";
-        }
-        const addr = state.relay_addr || "127.0.0.1:0";
-        if (localListen) localListen.value = addr;
-      } else {
-        if (chip) chip.className = "relay-status-chip";
-        if (statusText) statusText.innerText = "OFFLINE";
-        if (btnRelay) {
-          btnRelay.innerText = "启动中继";
-          btnRelay.className = "btn-secondary";
-        }
-        if (localListen) localListen.value = "动态分配 (待启动)";
-      }
-
-      // 流量 HUD 与脉冲动效
-      const sent = state.bytes_sent || 0;
-      const recv = state.bytes_received || 0;
-      const txEl = document.getElementById("txBytes");
-      const rxEl = document.getElementById("rxBytes");
-      if (txEl) txEl.innerText = formatBytes(sent);
-      if (rxEl) rxEl.innerText = formatBytes(recv);
-
-      const txPulse = document.getElementById("txPulse");
-      const rxPulse = document.getElementById("rxPulse");
-      if (txPulse && sent > lastBytesSent) {
-        txPulse.style.width = "100%";
-        setTimeout(() => { txPulse.style.width = "0%"; }, 400);
-      }
-      if (rxPulse && recv > lastBytesReceived) {
-        rxPulse.style.width = "100%";
-        setTimeout(() => { rxPulse.style.width = "0%"; }, 400);
-      }
-      lastBytesSent = sent;
-      lastBytesReceived = recv;
-
-      // 已托管进程列表渲染
-      const tbody = document.getElementById("procTableBody");
-      const procs = state.processes || [];
-      const procBadge = document.getElementById("navProcBadge");
-      const procSummaryBadge = document.getElementById("procSummaryBadge");
-      
-      const runningCount = procs.filter(p => p.running).length;
-      if (procBadge) procBadge.innerText = runningCount;
-      if (procSummaryBadge) procSummaryBadge.innerText = `${runningCount} / ${procs.length} 个进程运行中`;
-
-      if (tbody) {
-        if (procs.length === 0) {
-          tbody.innerHTML = `
-            <tr>
-              <td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
-                暂无托管进程。进入“进程注入”或“常用快捷”启动目标程序。
-              </td>
-            </tr>
-          `;
-        } else {
-          let html = "";
-          for (const p of procs) {
-            const isX86 = (p.arch || "").toLowerCase().includes("86") && !(p.arch || "").toLowerCase().includes("64");
-            const archClass = isX86 ? "badge-arch badge-arch-x86" : "badge-arch";
-            const statusClass = p.running ? "status-tag running" : "status-tag exited";
-            const statusDesc = p.running ? "RUNNING" : "EXITED (" + p.exit_code + ")";
-            const actionBtn = p.running 
-              ? `<button class="btn-terminate" onclick="killProcess(${p.pid})">终止</button>` 
-              : `<span style="color: var(--text-subtle); font-size: 11px;">已注销</span>`;
-
-            html += `
-              <tr>
-                <td>${p.pid}</td>
-                <td title="${p.path}"><strong>${p.name}</strong> <span style="font-size: 10.5px; color: var(--text-muted); margin-left: 4px;">${p.path !== p.name ? p.path : ""}</span></td>
-                <td><span class="${archClass}">${p.arch}</span></td>
-                <td><span class="${statusClass}"><span class="status-dot" style="background: currentColor; width: 6px; height: 6px;"></span>${statusDesc}</span></td>
-                <td style="text-align: center;">${actionBtn}</td>
-              </tr>
-            `;
-          }
-          tbody.innerHTML = html;
-        }
-      }
-
-      // 常用预设列表由后端同步
-      if (Array.isArray(state.presets)) {
-        const presetsJson = JSON.stringify(state.presets);
-        if (presetsJson !== lastPresetsJson) {
-          lastPresetsJson = presetsJson;
-          currentPresets = state.presets;
-          renderPresets(currentPresets);
-        }
-      }
-
-      if (state.last_log) {
-        log(state.last_log);
-      }
-    };
 
     window.addEventListener("DOMContentLoaded", () => {
       renderPresets();
