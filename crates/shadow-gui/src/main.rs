@@ -3,7 +3,7 @@
 //! 基于 Wry / Tao 原生 WebView 构建的高性能极简控制台，
 //! 负责本地透明中继管理、双架构目标程序注入、拖拽捕获与实时流量看板。
 
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![windows_subsystem = "windows"]
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

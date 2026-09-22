@@ -234,8 +234,10 @@ mod tests {
             temp_lnk.display()
         );
 
+        use std::os::windows::process::CommandExt;
         let status = std::process::Command::new("powershell")
             .args(["-NoProfile", "-Command", &script])
+            .creation_flags(0x0800_0000)
             .status();
 
         if let Ok(s) = status {

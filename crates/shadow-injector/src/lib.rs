@@ -4,9 +4,12 @@
 
 use std::ffi::{c_void, OsStr};
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use thiserror::Error;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, BOOL, HANDLE, HMODULE, WAIT_OBJECT_0};
+
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 use windows_sys::Win32::System::Diagnostics::Debug::WriteProcessMemory;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows_sys::Win32::System::Memory::{
@@ -14,7 +17,7 @@ use windows_sys::Win32::System::Memory::{
 };
 use windows_sys::Win32::System::Threading::{
     CreateProcessW, CreateRemoteThread, GetExitCodeThread, IsWow64Process,
-    ResumeThread, TerminateProcess, WaitForSingleObject, CREATE_NEW_CONSOLE, CREATE_SUSPENDED,
+    ResumeThread, TerminateProcess, WaitForSingleObject, CREATE_SUSPENDED,
     LPTHREAD_START_ROUTINE, PROCESS_INFORMATION, STARTUPINFOW,
 };
 
@@ -143,6 +146,7 @@ pub fn grant_appcontainer_permissions<P: AsRef<Path>>(dll_path: P) -> Result<()>
     let path_str = p.to_string_lossy();
     let status = std::process::Command::new("icacls")
         .args([path_str.as_ref(), "/grant", "*S-1-15-2-1:(RX)"])
+        .creation_flags(CREATE_NO_WINDOW)
         .status();
 
     if let Err(e) = status {
@@ -164,6 +168,7 @@ pub fn enable_loopback_exemption(package_family_or_sid: &str) -> Result<()> {
     };
     let status = std::process::Command::new("CheckNetIsolation.exe")
         .args(["LoopbackExempt", "-a", &format!("{}={}", flag, package_family_or_sid)])
+        .creation_flags(CREATE_NO_WINDOW)
         .status();
 
     match status {
@@ -282,14 +287,14 @@ pub fn spawn_and_inject_with_args<P: AsRef<Path>>(
             }
         }
 
-        // 1. 挂起启动目标进程 (CREATE_SUSPENDED | CREATE_NEW_CONSOLE 保障控制台程序窗口可见)
+        // 1. 挂起启动目标进程 (不附加 CREATE_NEW_CONSOLE，杜绝目标 GUI 应用程序启动时闪现黑框终端)
         let success: BOOL = CreateProcessW(
             target_wide.as_ptr(),
             cmdline_wide.as_mut_ptr(),
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             0,
-            CREATE_SUSPENDED | CREATE_NEW_CONSOLE,
+            CREATE_SUSPENDED,
             std::ptr::null_mut(),
             std::ptr::null(),
             &si,
