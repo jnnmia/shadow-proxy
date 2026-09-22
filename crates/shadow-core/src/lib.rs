@@ -82,6 +82,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_target_addr_zero_length_domain_rejected() {
+        let invalid_buf = b"GHST\x03\x00\x01\xbb".to_vec();
+        let mut cursor = std::io::Cursor::new(invalid_buf);
+        let err = TargetAddr::decode(&mut cursor).await.unwrap_err();
+        assert!(err.to_string().contains("不能为 0"));
+    }
+
+    #[tokio::test]
+    async fn test_target_addr_control_char_domain_rejected() {
+        let invalid_buf = b"GHST\x03\x07bad\x07url\x00\x50".to_vec();
+        let mut cursor = std::io::Cursor::new(invalid_buf);
+        let err = TargetAddr::decode(&mut cursor).await.unwrap_err();
+        assert!(err.to_string().contains("非法控制字符"));
+    }
+
+    #[tokio::test]
     async fn test_mock_socks5_connect_success() {
         // 启动 Mock SOCKS5 服务端
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -357,6 +373,47 @@ mod tests {
         let mut buf = [0u8; 16];
         let n = client.read(&mut buf).await.unwrap();
         assert_eq!(n, 0, "慢速无数据连接在超时后必须被服务端强制关闭");
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_relay_strict_dns_blocks_raw_domain() {
+        let relay_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_listener.local_addr().unwrap();
+        drop(relay_listener);
+
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let tracker = Arc::new(SessionTracker::default());
+
+        // 启用 strict_dns: true，配置全直连规则
+        let relay_server = RelayServer::with_router_and_tracker(
+            RelayConfig {
+                listen_addr: relay_addr,
+                upstream_proxy: "127.0.0.1:9".parse().unwrap(),
+                proxy_auth: None,
+                strict_dns: true,
+                handshake_timeout: None,
+            },
+            Arc::new(std::sync::RwLock::new(Router::preset_direct_all())),
+            Arc::clone(&tracker),
+        );
+
+        tokio::spawn(async move {
+            let _ = relay_server.run(shutdown_rx).await;
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let mut client = TcpStream::connect(relay_addr).await.unwrap();
+        // 发送未被 Fake-IP 转换的裸域名目标
+        let target = TargetAddr::Domain("raw.leak.example.com".into(), 80);
+        client.write_all(&target.encode()).await.unwrap();
+
+        // 验证连接被立即关闭 (服务端拒绝直连未解析的原始域名)
+        let mut buf = [0u8; 10];
+        let n = client.read(&mut buf).await.unwrap();
+        assert_eq!(n, 0, "严格防泄漏模式下直连原始裸域名必须被阻断");
 
         let _ = shutdown_tx.send(());
     }

@@ -250,6 +250,13 @@ async fn handle_inbound_connection(
             let connect_res = match &target {
                 TargetAddr::Ip(sa) => timeout(timeout_duration, TcpStream::connect(*sa)).await,
                 TargetAddr::Domain(host, port) => {
+                    if config.strict_dns {
+                        tracker.finish_session(session_id, SessionStatus::Failed, 0, 0);
+                        return Err(RelayError::DirectConnect(format!(
+                            "{}:{}: 严格防泄漏模式下禁止通过宿主系统 DNS 解析直连域名，必须经由 Fake-IP 或安全代理通道",
+                            host, port
+                        )));
+                    }
                     timeout(timeout_duration, TcpStream::connect((host.as_str(), *port))).await
                 }
             };

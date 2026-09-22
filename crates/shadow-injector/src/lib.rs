@@ -133,6 +133,55 @@ impl Drop for ProcessGuard {
     }
 }
 
+/// 为指定 Hook 动态库文件赋予 "ALL APPLICATION PACKAGES" (S-1-15-2-1) 读取与执行权限，
+/// 确保在 UWP / AppContainer 沙箱隔离进程中调用 LoadLibraryW 时不会因权限不足而失败
+pub fn grant_appcontainer_permissions<P: AsRef<Path>>(dll_path: P) -> Result<()> {
+    let p = dll_path.as_ref();
+    if !p.exists() {
+        return Ok(());
+    }
+    let path_str = p.to_string_lossy();
+    let status = std::process::Command::new("icacls")
+        .args([path_str.as_ref(), "/grant", "*S-1-15-2-1:(RX)"])
+        .status();
+
+    if let Err(e) = status {
+        tracing::warn!("调用 icacls 为 DLL 授予 AppContainer 读取权限失败: {}", e);
+    }
+    Ok(())
+}
+
+/// 为指定的 Windows UWP / WinStore 应用启用网络本地环回豁免 (Loopback Exemption)，
+/// 突破 AppContainer 对 127.0.0.1 本地透明中继端口的访问阻断
+pub fn enable_loopback_exemption(package_family_or_sid: &str) -> Result<()> {
+    if package_family_or_sid.is_empty() {
+        return Ok(());
+    }
+    let flag = if package_family_or_sid.starts_with("S-1-15-") {
+        "-p"
+    } else {
+        "-n"
+    };
+    let status = std::process::Command::new("CheckNetIsolation.exe")
+        .args(["LoopbackExempt", "-a", &format!("{}={}", flag, package_family_or_sid)])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            tracing::info!("成功为 AppContainer [{}] 启用 Loopback 豁免", package_family_or_sid);
+            Ok(())
+        }
+        Ok(s) => {
+            tracing::warn!("CheckNetIsolation 返回非零退出码: {:?}", s.code());
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!("调用 CheckNetIsolation.exe 失败: {}", e);
+            Ok(())
+        }
+    }
+}
+
 /// 挂起启动目标程序并注入指定架构的 Hook 动态库
 pub fn spawn_and_inject<P: AsRef<Path>>(target_exe: P, dll_path: P) -> Result<u32> {
     spawn_and_inject_with_args(target_exe, dll_path, None)
@@ -159,6 +208,9 @@ pub fn spawn_and_inject_with_args<P: AsRef<Path>>(
             format!("待注入的动态库不存在: {:?}", dll_path),
         )));
     }
+
+    // 自动为待注入 DLL 授权 ALL APPLICATION PACKAGES 权限，防止 AppContainer 隔离进程加载失败
+    let _ = grant_appcontainer_permissions(dll_path);
 
     // 若目标为 .lnk 快捷方式，自动解析为真实可执行文件并智能合并启动参数
     let (resolved_target, combined_args) = if let Some((real_exe, lnk_args)) = resolve_shortcut(target_path) {
@@ -356,6 +408,8 @@ pub fn inject_existing_pid<P: AsRef<Path>>(pid: u32, dll_path: P) -> Result<()> 
             format!("待注入的动态库不存在: {:?}", dll_p),
         )));
     }
+
+    let _ = grant_appcontainer_permissions(dll_p);
 
     let dll_wide = to_wide_chars(dll_p.as_os_str());
     let dll_size_bytes = dll_wide.len() * std::mem::size_of::<u16>();
@@ -611,5 +665,20 @@ mod tests {
                 CloseHandle(proc_check);
             }
         }
+    }
+
+    #[test]
+    fn test_appcontainer_permissions_and_loopback_exemption() {
+        let temp_dll = std::env::temp_dir().join("shadow_test_appcontainer.dll");
+        std::fs::write(&temp_dll, b"mock dll binary content").unwrap();
+
+        // 验证执行权限授予逻辑不发生 panic
+        let res = grant_appcontainer_permissions(&temp_dll);
+        assert!(res.is_ok());
+
+        // 验证 Loopback 豁免接口对空参数的短路安全防御
+        assert!(enable_loopback_exemption("").is_ok());
+
+        let _ = std::fs::remove_file(temp_dll);
     }
 }

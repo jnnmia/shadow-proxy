@@ -13,21 +13,16 @@ use windows_sys::Win32::Foundation::{BOOL, HINSTANCE, TRUE};
 use windows_sys::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
 use windows_sys::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
 
+use windows_sys::Win32::System::Diagnostics::Debug::OutputDebugStringA;
+
 pub fn hook_log(msg: &str) {
     if std::env::var_os("SHADOW_DEBUG").is_none() {
         return;
     }
-    use std::io::Write;
-    let exe = std::env::current_exe()
-        .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
-        .unwrap_or_default();
-    let log_path = std::env::temp_dir().join("shadow_hook.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-    {
-        let _ = writeln!(f, "[PID {} ({})] {}", std::process::id(), exe, msg);
+    // 规避 Loader Lock 死锁：采用 Win32 原生 OutputDebugStringA 输出调试信息，杜绝文件系统 I/O 与死锁
+    let formatted = format!("[shadow-hook][PID {}] {}\0", std::process::id(), msg);
+    unsafe {
+        OutputDebugStringA(formatted.as_ptr());
     }
 }
 

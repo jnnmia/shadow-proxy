@@ -113,10 +113,22 @@ impl TargetAddr {
             }
             0x03 => {
                 let len = reader.read_u8().await? as usize;
+                if len == 0 {
+                    return Err(ProtocolError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "目标域名长度不能为 0",
+                    )));
+                }
                 let mut host_bytes = vec![0u8; len];
                 reader.read_exact(&mut host_bytes).await?;
                 let port = reader.read_u16().await?;
                 let host = String::from_utf8(host_bytes)?;
+                if host.chars().any(|c| c.is_control() || c == ' ') {
+                    return Err(ProtocolError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "目标域名包含非法控制字符或空格",
+                    )));
+                }
                 Ok(TargetAddr::Domain(host, port))
             }
             other => Err(ProtocolError::UnsupportedAddressType(other)),

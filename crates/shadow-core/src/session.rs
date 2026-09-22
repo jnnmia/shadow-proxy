@@ -262,16 +262,40 @@ impl SessionTracker {
 }
 
 fn format_current_time() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    // 粗略换算成东八区时间 (UTC+8)
-    let local_secs = now + 8 * 3600;
-    let sec = local_secs % 60;
-    let min = (local_secs / 60) % 60;
-    let hour = (local_secs / 3600) % 24;
-    format!("{:02}:{:02}:{:02}", hour, min, sec)
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        struct SystemTimeWin {
+            w_year: u16,
+            w_month: u16,
+            w_day_of_week: u16,
+            w_day: u16,
+            w_hour: u16,
+            w_minute: u16,
+            w_second: u16,
+            w_milliseconds: u16,
+        }
+        extern "system" {
+            fn GetLocalTime(lp_system_time: *mut SystemTimeWin);
+        }
+        let mut st = std::mem::MaybeUninit::<SystemTimeWin>::uninit();
+        unsafe {
+            GetLocalTime(st.as_mut_ptr());
+            let st = st.assume_init();
+            format!("{:02}:{:02}:{:02}", st.w_hour, st.w_minute, st.w_second)
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let sec = now % 60;
+        let min = (now / 60) % 60;
+        let hour = (now / 3600) % 24;
+        format!("{:02}:{:02}:{:02}", hour, min, sec)
+    }
 }
 
 #[cfg(test)]

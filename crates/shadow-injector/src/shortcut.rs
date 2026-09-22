@@ -221,16 +221,32 @@ mod tests {
 
     #[test]
     fn test_real_system_lnk_resolution() {
-        // 尝试检测系统中存在的真实快捷方式
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            let candidate = PathBuf::from(appdata)
-                .join("Microsoft\\Windows\\Start Menu\\Programs\\Antigravity.lnk");
-            if candidate.exists() {
-                let resolved = resolve_shortcut(&candidate);
-                assert!(resolved.is_some());
-                let (target, _) = resolved.unwrap();
-                assert!(target.to_string_lossy().to_lowercase().ends_with(".exe"));
+        let temp_lnk = std::env::temp_dir().join("shadow_test_shortcut_eval.lnk");
+        let _ = std::fs::remove_file(&temp_lnk);
+
+        // 使用 PowerShell 动态生成一个标准 Windows .lnk 快捷方式
+        let script = format!(
+            "$ws = New-Object -ComObject WScript.Shell; \
+             $s = $ws.CreateShortcut('{}'); \
+             $s.TargetPath = 'C:\\Windows\\System32\\cmd.exe'; \
+             $s.Arguments = '/c echo test'; \
+             $s.Save()",
+            temp_lnk.display()
+        );
+
+        let status = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .status();
+
+        if let Ok(s) = status {
+            if s.success() && temp_lnk.exists() {
+                let resolved = resolve_shortcut(&temp_lnk);
+                assert!(resolved.is_some(), "必须成功解析动态创建的快捷方式");
+                let (target, args) = resolved.unwrap();
+                assert!(target.to_string_lossy().to_lowercase().contains("cmd.exe"));
+                assert_eq!(args.as_deref(), Some("/c echo test"));
             }
         }
+        let _ = std::fs::remove_file(temp_lnk);
     }
 }

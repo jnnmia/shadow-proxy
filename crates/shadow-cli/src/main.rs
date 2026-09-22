@@ -257,3 +257,53 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_args_defaults() {
+        let args = Args::try_parse_from(["shadow-cli"]).unwrap();
+        assert_eq!(args.proxy, "127.0.0.1:10808");
+        assert_eq!(args.listen, "127.0.0.1:0");
+        assert_eq!(args.rules, "smart");
+        assert!(args.strict_dns);
+        assert_eq!(args.target, None);
+        assert_eq!(args.args, None);
+        assert_eq!(args.username, None);
+        assert_eq!(args.password, None);
+    }
+
+    #[test]
+    fn test_cli_args_custom_values() {
+        let args = Args::try_parse_from([
+            "shadow-cli",
+            "--target",
+            "C:\\Windows\\System32\\cmd.exe",
+            "--args",
+            "/c dir",
+            "--proxy",
+            "192.168.1.1:7890",
+            "--listen",
+            "127.0.0.1:19090",
+            "--strict-dns",
+            "--rules",
+            "global",
+            "--username",
+            "admin",
+            "--password",
+            "secret123",
+        ])
+        .unwrap();
+
+        assert_eq!(args.target, Some(PathBuf::from("C:\\Windows\\System32\\cmd.exe")));
+        assert_eq!(args.args.as_deref(), Some("/c dir"));
+        assert_eq!(args.proxy, "192.168.1.1:7890");
+        assert_eq!(args.listen, "127.0.0.1:19090");
+        assert!(args.strict_dns);
+        assert_eq!(args.rules, "global");
+        assert_eq!(args.username.as_deref(), Some("admin"));
+        assert_eq!(args.password.as_deref(), Some("secret123"));
+    }
+}

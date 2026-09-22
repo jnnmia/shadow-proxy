@@ -1278,3 +1278,52 @@ fn run_app() -> anyhow::Result<()> {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ui_command_deserialization() {
+        // 1. window_ready
+        let cmd: IpcCommand = serde_json::from_str(r#"{"cmd":"window_ready"}"#).unwrap();
+        assert!(matches!(cmd, IpcCommand::WindowReady));
+
+        // 2. add_rule
+        let cmd: IpcCommand = serde_json::from_str(
+            r#"{"cmd":"add_rule","name":"测试规则","pattern_type":"Domain","pattern_val":"example.com","action":"Proxy"}"#,
+        )
+        .unwrap();
+        if let IpcCommand::AddRule {
+            name,
+            pattern_type,
+            pattern_val,
+            action,
+        } = cmd
+        {
+            assert_eq!(name, "测试规则");
+            assert_eq!(pattern_type, "Domain");
+            assert_eq!(pattern_val, "example.com");
+            assert_eq!(action, "Proxy");
+        } else {
+            panic!("反序列化类型不匹配");
+        }
+
+        // 3. kill_process
+        let cmd: IpcCommand = serde_json::from_str(r#"{"cmd":"kill_process","pid":12345}"#).unwrap();
+        if let IpcCommand::KillProcess { pid } = cmd {
+            assert_eq!(pid, 12345);
+        } else {
+            panic!("反序列化类型不匹配");
+        }
+
+        // 4. set_rule_preset
+        let cmd: IpcCommand =
+            serde_json::from_str(r#"{"cmd":"set_rule_preset","preset":"smart"}"#).unwrap();
+        if let IpcCommand::SetRulePreset { preset } = cmd {
+            assert_eq!(preset, "smart");
+        } else {
+            panic!("反序列化类型不匹配");
+        }
+    }
+}
