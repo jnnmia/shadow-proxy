@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use tokio::sync::broadcast;
 
+mod icon_extractor;
+
 #[derive(Debug)]
 enum UserEvent {
     Ipc(String),
@@ -87,6 +89,8 @@ pub struct PresetItem {
     pub name: String,
     pub target: String,
     pub args: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -98,6 +102,8 @@ struct ProcessInfo {
     arch: String,
     running: bool,
     exit_code: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 struct TrackedProcess {
@@ -109,6 +115,7 @@ struct TrackedProcess {
     handle: windows_sys::Win32::Foundation::HANDLE,
     running: bool,
     exit_code: u32,
+    icon: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -163,7 +170,21 @@ impl AppState {
         if let Some(path) = presets_file_path() {
             if path.exists() {
                 if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(items) = serde_json::from_str::<Vec<PresetItem>>(&content) {
+                    if let Ok(mut items) = serde_json::from_str::<Vec<PresetItem>>(&content) {
+                        let mut updated = false;
+                        for item in &mut items {
+                            if item.icon.is_none() {
+                                item.icon = icon_extractor::extract_icon_as_base64_png(&item.target);
+                                if item.icon.is_some() {
+                                    updated = true;
+                                }
+                            }
+                        }
+                        if updated {
+                            if let Ok(json) = serde_json::to_string_pretty(&items) {
+                                let _ = std::fs::write(&path, json);
+                            }
+                        }
                         return items;
                     }
                 }
@@ -177,17 +198,23 @@ impl AppState {
                 .join("antigravity")
                 .join("Antigravity.exe");
             if ag_path.exists() {
+                let ag_target = ag_path.to_string_lossy().to_string();
+                let icon = icon_extractor::extract_icon_as_base64_png(&ag_target);
                 defaults.push(PresetItem {
                     name: "Antigravity (AI IDE)".to_string(),
-                    target: ag_path.to_string_lossy().to_string(),
+                    target: ag_target,
                     args: "--no-proxy-server".to_string(),
+                    icon,
                 });
             }
         }
+        let curl_target = "C:\\Windows\\System32\\curl.exe".to_string();
+        let curl_icon = icon_extractor::extract_icon_as_base64_png(&curl_target);
         defaults.push(PresetItem {
             name: "curl.exe (连通性测速)".to_string(),
-            target: "C:\\Windows\\System32\\curl.exe".to_string(),
+            target: curl_target,
             args: "https://api.ipify.org -v".to_string(),
+            icon: curl_icon,
         });
 
         if let Some(path) = presets_file_path() {
@@ -530,6 +557,7 @@ impl AppState {
             )
         };
 
+        let icon = icon_extractor::extract_icon_as_base64_png(&path);
         self.processes.push(TrackedProcess {
             pid,
             parent_pid: None,
@@ -539,6 +567,7 @@ impl AppState {
             handle,
             running: true,
             exit_code: 0,
+            icon,
         });
 
         self.last_log = Some(format!(
@@ -622,6 +651,12 @@ impl AppState {
                         )
                     };
 
+                    let icon = self
+                        .processes
+                        .iter()
+                        .find(|p| p.pid == parent_pid)
+                        .and_then(|p| p.icon.clone());
+
                     self.processes.push(TrackedProcess {
                         pid: child_pid,
                         parent_pid: Some(parent_pid),
@@ -631,6 +666,7 @@ impl AppState {
                         handle,
                         running: true,
                         exit_code: 0,
+                        icon,
                     });
 
                     self.last_log = Some(format!(
@@ -661,6 +697,7 @@ impl AppState {
                 arch: p.arch.clone(),
                 running: p.running,
                 exit_code: p.exit_code,
+                icon: p.icon.clone(),
             })
             .collect();
 
@@ -1100,10 +1137,13 @@ fn run_app() -> anyhow::Result<()> {
                                         !(p.target.eq_ignore_ascii_case(&clean_target) && p.args == clean_args)
                                     });
 
+                                    let icon = icon_extractor::extract_icon_as_base64_png(&clean_target);
+
                                     state.presets.insert(0, PresetItem {
                                         name: display_name.clone(),
                                         target: clean_target,
                                         args: clean_args,
+                                        icon,
                                     });
 
                                     if state.presets.len() > 32 {

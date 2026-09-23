@@ -621,6 +621,30 @@
       border: 1px solid var(--border-subtle);
     }
 
+    .preset-app-real-icon {
+      width: 24px;
+      height: 24px;
+      object-fit: contain;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+    }
+
+    .proc-item-icon {
+      width: 16px;
+      height: 16px;
+      object-fit: contain;
+      vertical-align: -2.5px;
+      margin-right: 6px;
+      border-radius: 2px;
+      filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+    }
+
+    .proc-item-icon-fallback {
+      display: inline-block;
+      vertical-align: -2.5px;
+      margin-right: 6px;
+      color: var(--text-muted);
+    }
+
     .preset-tile-info {
       flex: 1;
       min-width: 0;
@@ -1791,11 +1815,14 @@
             const isChild = typeof p.parent_pid === 'number' && p.parent_pid > 0;
             const treePrefix = isChild ? `<span style="color: var(--text-subtle); font-family: monospace; font-size: 11px; margin-right: 4px;">└─</span>` : "";
             const parentBadge = isChild ? `<span style="font-size: 10px; color: var(--text-subtle); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; margin-left: 6px;">父PID: ${p.parent_pid}</span>` : "";
+            const procIcon = (p.icon && p.icon.trim().length > 0)
+              ? `<img src="${p.icon}" class="proc-item-icon" alt="" onerror="this.style.display='none';" />`
+              : `<svg class="proc-item-icon-fallback" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect></svg>`;
 
             html += `
               <tr>
                 <td>${p.pid}</td>
-                <td title="${p.path}">${treePrefix}<strong>${p.name}</strong>${parentBadge} <span style="font-size: 10.5px; color: var(--text-muted); margin-left: 4px;">${p.path !== p.name ? p.path : ""}</span></td>
+                <td title="${p.path}">${treePrefix}${procIcon}<strong>${p.name}</strong>${parentBadge} <span style="font-size: 10.5px; color: var(--text-muted); margin-left: 4px;">${p.path !== p.name ? p.path : ""}</span></td>
                 <td><span class="${archClass}">${p.arch}</span></td>
                 <td><span class="${statusClass}"><span class="status-dot" style="background: currentColor; width: 6px; height: 6px;"></span>${statusDesc}</span></td>
                 <td style="text-align: center;">${actionBtn}</td>
@@ -1929,13 +1956,16 @@
 
       let html = "";
       presets.forEach((p, idx) => {
-        const argsText = p.args && p.args.trim().length > 0 ? p.args : "默认启动参数";
         const iconSvg = getAppIconSvg(p.name, p.target);
+        const iconHtml = (p.icon && p.icon.trim().length > 0)
+          ? `<img class="preset-app-real-icon" src="${p.icon}" alt="" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" /><div style="display: none; align-items: center; justify-content: center;">${iconSvg}</div>`
+          : iconSvg;
+
         html += `
           <div class="preset-tile">
             <div class="preset-tile-header" onclick="fillInputsFromPreset(${idx})" title="点击填充此路径与参数至进程注入页" style="cursor: pointer;">
               <div class="preset-app-icon-wrap">
-                ${iconSvg}
+                ${iconHtml}
               </div>
               <div class="preset-tile-info">
                 <div class="preset-title" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
