@@ -76,12 +76,16 @@ pub fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+static GDI_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 从指定 Windows 可执行文件或关联路径中提取原生图标，并转换为透明 Data URL (PNG Base64)
 pub fn extract_icon_as_base64_png<P: AsRef<Path>>(path: P) -> Option<String> {
     let path_ref = path.as_ref();
     if !path_ref.exists() {
         return None;
     }
+
+    let _guard = GDI_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
     unsafe {
         // 1. 动态获取 Shell 与 User32 相关函数句柄
@@ -276,16 +280,21 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_icon_antigravity() {
-        if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
-            let ag_path = Path::new(&local_appdata)
-                .join("Programs")
-                .join("antigravity")
-                .join("Antigravity.exe");
-            if ag_path.exists() {
-                let res = extract_icon_as_base64_png(&ag_path);
-                println!("Antigravity icon res: {:?}", res.is_some());
-                assert!(res.is_some());
+    fn test_extract_icon_concurrent_safety() {
+        let cmd_path = "C:\\Windows\\System32\\cmd.exe";
+        if Path::new(cmd_path).exists() {
+            let mut handles = Vec::new();
+            for _ in 0..4 {
+                let p = cmd_path.to_string();
+                handles.push(std::thread::spawn(move || {
+                    let res = extract_icon_as_base64_png(&p);
+                    assert!(res.is_some(), "多线程并发提取系统 cmd.exe 图标应当成功");
+                    let data = res.unwrap();
+                    assert!(data.starts_with("data:image/png;base64,"));
+                }));
+            }
+            for h in handles {
+                h.join().expect("并发线程执行无 Panic");
             }
         }
     }

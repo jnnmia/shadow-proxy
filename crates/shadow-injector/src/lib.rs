@@ -432,7 +432,9 @@ pub fn spawn_and_inject_with_args<P: AsRef<Path>>(
         tracing::info!("远程注入线程退出码 (LoadLibraryW 返回基址低32位): 0x{:x}", load_lib_ret);
         if load_lib_ret == 0 {
             VirtualFreeEx(pi.hProcess, remote_mem, 0, MEM_RELEASE);
-            return Err(InjectorError::Win32(GetLastError(), "远程进程执行 LoadLibraryW 失败返回 NULL"));
+            return Err(InjectorError::InvalidPe(
+                "目标远程进程执行 LoadLibraryW 失败 (返回基址为 NULL，请确认 DLL 依赖是否完整及访问权限)".into()
+            ));
         }
 
         // 7. 释放分配的 DLL 路径字符串内存
@@ -589,7 +591,9 @@ pub fn inject_existing_pid<P: AsRef<Path>>(pid: u32, dll_path: P) -> Result<()> 
         drop(proc_guard);
 
         if load_lib_ret == 0 {
-            return Err(InjectorError::Win32(GetLastError(), "远程进程执行 LoadLibraryW 失败"));
+            return Err(InjectorError::InvalidPe(
+                format!("向目标进程 PID {} 执行 LoadLibraryW 失败 (返回基址为 NULL)", pid)
+            ));
         }
 
         tracing::info!("成功向 PID {} 动态注入 Hook 动态库", pid);

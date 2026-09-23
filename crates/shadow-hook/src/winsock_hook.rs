@@ -534,6 +534,28 @@ pub unsafe extern "system" fn hooked_connectex(
     )
 }
 
+unsafe fn ensure_pending_frame_sent(s: SOCKET) -> Result<(), i32> {
+    if let Some(frame) = take_pending_frame(s) {
+        crate::hook_log(&format!("send: 首次发送前注入 {} 字节代理握手帧", frame.len()));
+        let sent = send(s, frame.as_ptr(), frame.len() as i32, 0);
+        if sent == frame.len() as i32 {
+            Ok(())
+        } else if sent > 0 && (sent as usize) < frame.len() {
+            let remaining = frame[sent as usize..].to_vec();
+            store_pending_frame(s, remaining);
+            WSASetLastError(WSAEWOULDBLOCK);
+            Err(SOCKET_ERROR)
+        } else {
+            let err = WSAGetLastError();
+            store_pending_frame(s, frame);
+            WSASetLastError(if err != 0 { err } else { WSAEWOULDBLOCK });
+            Err(SOCKET_ERROR)
+        }
+    } else {
+        Ok(())
+    }
+}
+
 pub unsafe extern "system" fn hooked_wsasend(
     s: SOCKET,
     lp_buffers: *const WsaBuf,
@@ -543,9 +565,8 @@ pub unsafe extern "system" fn hooked_wsasend(
     lp_overlapped: *mut c_void,
     lp_completion_routine: *mut c_void,
 ) -> i32 {
-    if let Some(frame) = take_pending_frame(s) {
-        crate::hook_log(&format!("WSASend: 首次发送前注入 {} 字节代理握手帧", frame.len()));
-        let _ = send(s, frame.as_ptr(), frame.len() as i32, 0);
+    if let Err(err) = ensure_pending_frame_sent(s) {
+        return err;
     }
 
     let orig_fn = ORIG_WSASEND.load(Ordering::Relaxed);
@@ -572,9 +593,8 @@ pub unsafe extern "system" fn hooked_send(
     len: i32,
     flags: i32,
 ) -> i32 {
-    if let Some(frame) = take_pending_frame(s) {
-        crate::hook_log(&format!("send: 首次发送前注入 {} 字节代理握手帧", frame.len()));
-        let _ = send(s, frame.as_ptr(), frame.len() as i32, 0);
+    if let Err(err) = ensure_pending_frame_sent(s) {
+        return err;
     }
 
     let orig_fn = ORIG_SEND.load(Ordering::Relaxed);
@@ -1847,6 +1867,13 @@ mod tests {
         store_pending_frame(fake_socket, vec![9, 9, 9]);
         remove_pending_frame(fake_socket);
         assert!(take_pending_frame(fake_socket).is_none());
+    }
+
+    #[test]
+    fn test_ensure_pending_frame_sent_no_pending() {
+        let fake_socket: SOCKET = 88888;
+        remove_pending_frame(fake_socket);
+        assert!(unsafe { ensure_pending_frame_sent(fake_socket) }.is_ok());
     }
 
     #[test]
