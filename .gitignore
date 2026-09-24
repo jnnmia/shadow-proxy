@@ -1,13 +1,35 @@
-# CodeGraph
-.codegraph/
-
-# Rust build targets
+# Rust build targets & binaries
 target/
 bin/
+*.exe
+*.dll
+*.pdb
+*.lib
+*.a
+*.res.o
 .cargo/*
 !.cargo/config.toml
 
-# OS metadata
+# Agent governance, skills & local learnings
+.agent/
+.agents/
+.specify/
+.learnings/
+AGENTS.md
+templates/
+
+# Root redundant assets
+/app_icon.ico
+/app_icon_preview.png
+
+# CodeGraph & Local Index
+.codegraph/
+
+# OS & Editor metadata
 .DS_Store
 Thumbs.db
-
+.vscode/
+.idea/
+*.log
+*.tmp
+*.bak
