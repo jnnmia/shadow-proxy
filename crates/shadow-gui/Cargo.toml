@@ -1,0 +1,23 @@
+[package]
+name = "shadow-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "shadow-gui"
+path = "src/main.rs"
+
+[dependencies]
+shadow-core = { path = "../shadow-core" }
+shadow-injector = { path = "../shadow-injector" }
+wry = "0.57"
+tao = "0.37"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { workspace = true }
+windows-sys = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

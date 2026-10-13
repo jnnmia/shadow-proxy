@@ -1,0 +1,36 @@
+# Rust build targets & binaries
+target/
+bin/
+dist/
+*.exe
+*.dll
+*.pdb
+*.lib
+*.a
+*.res.o
+.cargo/*
+!.cargo/config.toml
+
+# Agent governance, skills & local learnings
+.agent/
+.agents/
+.specify/
+.learnings/
+AGENTS.md
+templates/
+
+# Root redundant assets
+/app_icon.ico
+/app_icon_preview.png
+
+# CodeGraph & Local Index
+.codegraph/
+
+# OS & Editor metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+*.tmp
+*.bak
