@@ -19,7 +19,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 APP_NAME = "ShadowProxy"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.2"
 APP_DESCRIPTION = "Windows 进程级透明代理引擎"
 PUBLISHER = "ShadowProxy Team"
 HOMEPAGE = "https://github.com/jnnmia/shadow-proxy"
@@ -39,7 +39,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $appName = "ShadowProxy"
-$appVersion = "0.1.0"
+$appVersion = "0.1.2"
 $sourceDir = $PSScriptRoot
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\$appName"
 

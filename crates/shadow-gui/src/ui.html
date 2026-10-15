@@ -1018,6 +1018,195 @@
       font-family: var(--code-font);
       margin-top: 3px;
     }
+
+    /* 侧边栏底部版本与检查更新 */
+    .sidebar-version-bar {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .version-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .version-tag {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--code-font);
+      font-weight: 600;
+    }
+    .update-badge-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--cyan-neon);
+      box-shadow: 0 0 6px var(--cyan-neon);
+      animation: pulse-dot 1.5s infinite;
+    }
+    .btn-check-update {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+      font-size: 11px;
+      padding: 3px 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.2s ease;
+    }
+    .btn-check-update:hover {
+      background: var(--bg-surface-elevated);
+      color: var(--cyan-neon);
+      border-color: rgba(57, 197, 187, 0.4);
+    }
+    .spinning {
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      100% { transform: rotate(360deg); }
+    }
+
+    /* 更新模态对话框 */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(4, 7, 12, 0.75);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      animation: fadeIn 0.2s ease-out;
+    }
+    .modal-card {
+      width: 520px;
+      max-width: 90vw;
+      background: var(--bg-surface-elevated);
+      border: 1px solid rgba(57, 197, 187, 0.3);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      animation: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes scaleUp { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(17, 23, 34, 0.6);
+    }
+    .modal-title-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .update-icon-circle {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(57, 197, 187, 0.12);
+      border: 1px solid rgba(57, 197, 187, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .modal-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .modal-subtitle {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      font-family: var(--code-font);
+      margin-top: 2px;
+    }
+    .modal-body {
+      padding: 18px 20px;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+    .update-release-date {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      font-family: var(--code-font);
+    }
+    .update-changelog-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--cyan-neon);
+      margin-bottom: 6px;
+    }
+    .update-changelog-box {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #c9d1d9;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--code-font);
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      background: rgba(17, 23, 34, 0.6);
+    }
+
+    /* Toast 消息提示 */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 10000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast-msg {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-focus);
+      color: var(--text-primary);
+      padding: 10px 16px;
+      border-radius: var(--radius-md);
+      font-size: 12.5px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      animation: toastIn 0.3s cubic-bezier(0.16, 1, 0.3, 1), toastOut 0.3s ease 2.7s forwards;
+      pointer-events: auto;
+      max-width: 320px;
+      word-break: break-all;
+    }
+    .toast-msg.success {
+      border-color: rgba(63, 185, 80, 0.5);
+      color: var(--green-live);
+    }
+    .toast-msg.error {
+      border-color: rgba(248, 81, 73, 0.5);
+      color: var(--red-accent);
+    }
+    @keyframes toastIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes toastOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(12px); } }
   </style>
 </head>
 <body>
@@ -1120,6 +1309,19 @@
             <span id="rxSpeed" class="speed-tag">0 B/s</span>
             <div id="rxPulse" class="meter-pulse" style="background: var(--blue-accent);"></div>
           </div>
+        </div>
+
+        <div class="sidebar-version-bar">
+          <div class="version-meta">
+            <span class="version-tag" id="sidebarVersionTag">v0.1.2</span>
+            <span id="updateBadgeDot" class="update-badge-dot" style="display: none;" title="发现新版本"></span>
+          </div>
+          <button id="btnCheckUpdate" class="btn-check-update" onclick="checkUpdate(false)" title="检查 GitHub 最新发布版本">
+            <svg id="iconCheckUpdate" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
+            </svg>
+            <span>检查更新</span>
+          </button>
         </div>
       </div>
     </aside>
@@ -1421,6 +1623,41 @@
       <span>ZERO-EMOJI RUST PROXIFIER</span>
     </div>
   </footer>
+
+  <!-- 更新模态弹窗 -->
+  <div id="updateModal" class="modal-overlay" style="display: none;" onclick="if(event.target===this)closeUpdateModal()">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="update-icon-circle">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-neon)" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </div>
+          <div>
+            <div class="modal-title" id="updateModalTitle">发现新版本 v0.0.0</div>
+            <div class="modal-subtitle" id="updateModalSubtitle">当前版本: v0.1.2</div>
+          </div>
+        </div>
+        <button type="button" class="btn-text" onclick="closeUpdateModal()" style="font-size: 16px; color: var(--text-muted); cursor: pointer;">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="update-release-date" id="updateReleaseDate">发布时间: -</div>
+        <div class="update-changelog-title">更新日志 (CHANGELOG)</div>
+        <div class="update-changelog-box" id="updateChangelog">暂无更新日志</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeUpdateModal()">稍后提醒</button>
+        <button type="button" class="btn-secondary" onclick="openReleasePage()">前往 GitHub 查看</button>
+        <button type="button" class="btn-primary" id="btnAutoInstall" onclick="autoInstallUpdate()">一键更新安装</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 消息容器 -->
+  <div id="toastContainer" class="toast-container"></div>
 
   <script>
     let isRelayRunning = false;
@@ -1876,6 +2113,12 @@
         }
       }
 
+      if (state.app_version) {
+        currentAppVersion = state.app_version;
+        const vTag = document.getElementById("sidebarVersionTag");
+        if (vTag) vTag.innerText = "v" + state.app_version;
+      }
+
       if (state.last_log) {
         log(state.last_log);
       }
@@ -2118,6 +2361,192 @@
       launchProcess(curlPath, curlArgs);
     }
 
+    /* GitHub 版本更新检测与一键安装 */
+    let currentAppVersion = "0.1.2";
+    let latestReleaseData = null;
+    let isDownloadingUpdate = false;
+
+    function showToast(msg, type = "info") {
+      const container = document.getElementById("toastContainer");
+      if (!container) return;
+      const toast = document.createElement("div");
+      toast.className = "toast-msg" + (type ? " " + type : "");
+      toast.innerText = msg;
+      container.appendChild(toast);
+      setTimeout(() => {
+        if (toast.parentNode) {
+          toast.parentNode.removeChild(toast);
+        }
+      }, 3000);
+    }
+
+    function compareVersions(v1, v2) {
+      const clean = (s) => (s || "").replace(/^[^0-9]+/, "").trim();
+      const p1 = clean(v1).split(/[\.-]/).map(x => parseInt(x, 10) || 0);
+      const p2 = clean(v2).split(/[\.-]/).map(x => parseInt(x, 10) || 0);
+      const len = Math.max(p1.length, p2.length);
+      for (let i = 0; i < len; i++) {
+        const num1 = p1[i] || 0;
+        const num2 = p2[i] || 0;
+        if (num1 > num2) return 1;
+        if (num1 < num2) return -1;
+      }
+      return 0;
+    }
+
+    async function checkUpdate(silent = false) {
+      if (silent) {
+        const lastCheck = parseInt(localStorage.getItem("shadow_last_update_check") || "0", 10);
+        if (Date.now() - lastCheck < 4 * 3600 * 1000) {
+          return;
+        }
+      }
+
+      const icon = document.getElementById("iconCheckUpdate");
+      const btn = document.getElementById("btnCheckUpdate");
+      if (icon) icon.classList.add("spinning");
+      if (btn) btn.disabled = true;
+
+      const apiUrl = "https://api.github.com/repos/jnnmia/shadow-proxy/releases/latest";
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+
+      try {
+        const res = await fetch(apiUrl, {
+          signal: controller.signal,
+          headers: {
+            "Accept": "application/vnd.github.v3+json"
+          }
+        });
+        clearTimeout(timer);
+
+        if (!res.ok) {
+          if (res.status === 403) {
+            localStorage.setItem("shadow_last_update_check", String(Date.now()));
+            throw new Error("API 访问频次受限 (60次/小时)，请稍后重试");
+          } else if (res.status === 404) {
+            throw new Error("当前仓库暂无正式发布版本");
+          } else {
+            throw new Error("HTTP " + res.status);
+          }
+        }
+
+        localStorage.setItem("shadow_last_update_check", String(Date.now()));
+        const data = await res.json();
+        const remoteVersion = data.tag_name || data.name || "";
+        const hasUpdate = compareVersions(remoteVersion, currentAppVersion) > 0;
+
+        const badgeDot = document.getElementById("updateBadgeDot");
+        if (hasUpdate) {
+          latestReleaseData = data;
+          if (badgeDot) badgeDot.style.display = "inline-block";
+          log("[UPDATE] 发现新版本: " + remoteVersion + " (当前: v" + currentAppVersion + ")");
+          if (!silent) {
+            showUpdateModal(data);
+          } else {
+            showToast("发现新版本 " + remoteVersion + "，可前往检查更新", "info");
+          }
+        } else {
+          if (badgeDot) badgeDot.style.display = "none";
+          log("[UPDATE] 当前已是最新版本 (v" + currentAppVersion + ")");
+          if (!silent) {
+            showToast("当前已是最新版本 (v" + currentAppVersion + ")", "success");
+          }
+        }
+      } catch (err) {
+        clearTimeout(timer);
+        const errMsg = err.name === "AbortError" ? "连接超时" : err.message;
+        log("[UPDATE] 检查更新失败: " + errMsg);
+        if (!silent) {
+          showToast("检查更新失败: " + errMsg, "error");
+        }
+      } finally {
+        if (icon) icon.classList.remove("spinning");
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function showUpdateModal(data) {
+      const modal = document.getElementById("updateModal");
+      const title = document.getElementById("updateModalTitle");
+      const subtitle = document.getElementById("updateModalSubtitle");
+      const dateEl = document.getElementById("updateReleaseDate");
+      const changelogEl = document.getElementById("updateChangelog");
+      const installBtn = document.getElementById("btnAutoInstall");
+
+      const remoteTag = data.tag_name || data.name || "最新版本";
+      if (title) title.innerText = "发现新版本 " + remoteTag;
+      if (subtitle) subtitle.innerText = "当前安装版本: v" + currentAppVersion;
+      if (dateEl) {
+        dateEl.innerText = "发布时间: " + (data.published_at ? new Date(data.published_at).toLocaleString() : "-");
+      }
+      if (changelogEl) {
+        changelogEl.innerText = data.body ? data.body.trim() : "无更新日志说明";
+      }
+      if (installBtn) {
+        installBtn.disabled = isDownloadingUpdate;
+        installBtn.innerText = isDownloadingUpdate ? "下载中..." : "一键更新安装";
+      }
+      if (modal) modal.style.display = "flex";
+    }
+
+    function closeUpdateModal() {
+      const modal = document.getElementById("updateModal");
+      if (modal) modal.style.display = "none";
+    }
+
+    function openReleasePage() {
+      const url = (latestReleaseData && latestReleaseData.html_url) 
+        ? latestReleaseData.html_url 
+        : "https://github.com/jnnmia/shadow-proxy/releases/latest";
+      sendIpc("open_url", { url });
+      closeUpdateModal();
+    }
+
+    function autoInstallUpdate() {
+      if (isDownloadingUpdate) {
+        showToast("安装包正在下载中，请稍候...", "info");
+        return;
+      }
+      if (!latestReleaseData || !Array.isArray(latestReleaseData.assets) || latestReleaseData.assets.length === 0) {
+        showToast("未检测到预编译发布包，正前往 GitHub Releases 页面", "info");
+        openReleasePage();
+        return;
+      }
+      const exeAssets = latestReleaseData.assets.filter(a => (a.name || "").toLowerCase().endsWith(".exe"));
+      if (exeAssets.length === 0) {
+        showToast("未在发布包中找到可执行安装程序，正前往网页下载", "info");
+        openReleasePage();
+        return;
+      }
+      const asset = exeAssets.find(a => {
+        const n = (a.name || "").toLowerCase();
+        return n.includes("setup") || n.includes("install");
+      }) || exeAssets[0];
+
+      const downloadUrl = asset.browser_download_url;
+      const filename = asset.name;
+
+      isDownloadingUpdate = true;
+      const installBtn = document.getElementById("btnAutoInstall");
+      if (installBtn) {
+        installBtn.disabled = true;
+        installBtn.innerText = "下载中...";
+      }
+
+      sendIpc("download_and_install", { url: downloadUrl, filename });
+      showToast("正在后台下载安装包: " + filename, "success");
+      closeUpdateModal();
+
+      setTimeout(() => {
+        isDownloadingUpdate = false;
+        if (installBtn) {
+          installBtn.disabled = false;
+          installBtn.innerText = "一键更新安装";
+        }
+      }, 15000);
+    }
+
     window.addEventListener("DOMContentLoaded", () => {
       renderPresets();
 
@@ -2151,6 +2580,11 @@
       requestAnimationFrame(() => {
         sendIpc("window_ready");
       });
+
+      // 启动 2 秒后静默检查更新
+      setTimeout(() => {
+        checkUpdate(true);
+      }, 2000);
     });
   </script>
 </body>

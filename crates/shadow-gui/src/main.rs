@@ -35,6 +35,7 @@ enum UserEvent {
     Tick,
     SystemSuspend,
     SystemResume,
+    Log(String),
 }
 
 #[derive(Deserialize, Debug)]
@@ -86,6 +87,10 @@ enum IpcCommand {
     SetProxyConfig { proxy: String, strict_dns: bool },
     #[serde(rename = "window_ready")]
     WindowReady,
+    #[serde(rename = "open_url")]
+    OpenUrl { url: String },
+    #[serde(rename = "download_and_install")]
+    DownloadAndInstall { url: String, filename: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -142,6 +147,7 @@ impl RelayStatus {
 
 #[derive(Serialize, Debug)]
 struct FullState {
+    app_version: String,
     relay_active: bool,
     relay_status: String,
     upstream_healthy: bool,
@@ -948,6 +954,7 @@ impl AppState {
         let ping_ms = dynamic_ping.or(self.ping_ms);
 
         FullState {
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
             relay_active: self.relay.is_some(),
             relay_status,
             upstream_healthy,
@@ -1099,6 +1106,8 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+static IS_DOWNLOADING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn run_app() -> anyhow::Result<()> {
     let log_step = |step: &str| {
@@ -1326,6 +1335,16 @@ fn run_app() -> anyhow::Result<()> {
                 }
                 UserEvent::SystemResume => {
                     state.handle_system_resume();
+                    let full = state.get_full_state();
+                    if let Ok(json) = serde_json::to_string(&full) {
+                        let _ = webview.evaluate_script(&format!(
+                            "window.updateState({});",
+                            json
+                        ));
+                    }
+                }
+                UserEvent::Log(msg) => {
+                    state.last_log = Some(msg);
                     let full = state.get_full_state();
                     if let Ok(json) = serde_json::to_string(&full) {
                         let _ = webview.evaluate_script(&format!(
@@ -1648,6 +1667,122 @@ fn run_app() -> anyhow::Result<()> {
                             }
                             IpcCommand::WindowReady => {
                                 window.set_visible(true);
+                            }
+                            IpcCommand::OpenUrl { url } => {
+                                let clean = url.trim().to_string();
+                                if clean.starts_with("https://") || clean.starts_with("http://") {
+                                    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+                                    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+                                    let url_w: Vec<u16> = clean.encode_utf16().chain(std::iter::once(0)).collect();
+                                    let open_w: Vec<u16> = "open\0".encode_utf16().collect();
+                                    unsafe {
+                                        ShellExecuteW(
+                                            0 as _,
+                                            open_w.as_ptr(),
+                                            url_w.as_ptr(),
+                                            core::ptr::null(),
+                                            core::ptr::null(),
+                                            SW_SHOWNORMAL as i32,
+                                        );
+                                    }
+                                }
+                            }
+                            IpcCommand::DownloadAndInstall { url, filename } => {
+                                if IS_DOWNLOADING
+                                    .compare_exchange(
+                                        false,
+                                        true,
+                                        std::sync::atomic::Ordering::SeqCst,
+                                        std::sync::atomic::Ordering::SeqCst,
+                                    )
+                                    .is_err()
+                                {
+                                    let _ = proxy.send_event(UserEvent::Log(
+                                        "[UPDATE] 安装包正在下载中，请勿重复操作".to_string(),
+                                    ));
+                                } else {
+                                    let clean_url = url.trim().to_string();
+                                    if !clean_url.starts_with("https://github.com/")
+                                        && !clean_url.starts_with("https://objects.githubusercontent.com/")
+                                    {
+                                        IS_DOWNLOADING.store(false, std::sync::atomic::Ordering::SeqCst);
+                                        let _ = proxy.send_event(UserEvent::Log(
+                                            "[UPDATE] 下载链接非官方 GitHub 仓库，已拒绝下载".to_string(),
+                                        ));
+                                    } else {
+                                        let proxy_ev = proxy.clone();
+                                        std::thread::spawn(move || {
+                                    struct DownloadGuard;
+                                    impl Drop for DownloadGuard {
+                                        fn drop(&mut self) {
+                                            IS_DOWNLOADING.store(false, std::sync::atomic::Ordering::SeqCst);
+                                        }
+                                    }
+                                    let _guard = DownloadGuard;
+
+                                    use std::os::windows::process::CommandExt;
+                                    let temp_dir = std::env::temp_dir();
+                                    let safe_name = std::path::Path::new(&filename)
+                                        .file_name()
+                                        .and_then(|s| s.to_str())
+                                        .map(|s| s.trim())
+                                        .filter(|s| {
+                                            s.ends_with(".exe")
+                                                && !s.is_empty()
+                                                && !s.contains("..")
+                                                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+                                        })
+                                        .unwrap_or("ShadowProxy-Setup.exe");
+                                    let dest = temp_dir.join(safe_name);
+
+                                    let _ = proxy_ev.send_event(UserEvent::Log(format!("[UPDATE] 正在下载最新安装包: {}", safe_name)));
+
+                                    let status = std::process::Command::new("curl.exe")
+                                        .args([
+                                            "-L",
+                                            "--fail",
+                                            "--silent",
+                                            "--show-error",
+                                            "--connect-timeout",
+                                            "15",
+                                            "--max-time",
+                                            "600",
+                                            "-o",
+                                            dest.to_string_lossy().as_ref(),
+                                            "--",
+                                            &clean_url,
+                                        ])
+                                        .creation_flags(0x08000000)
+                                        .status();
+
+                                    match status {
+                                        Ok(s) if s.success() && dest.exists() => {
+                                            let _ = proxy_ev.send_event(UserEvent::Log("[UPDATE] 安装包下载完成，正在启动安装程序...".to_string()));
+                                            let _ = proxy_ev.send_event(UserEvent::Log("[UPDATE] 安装程序已启动，请退出当前程序以完成更新".to_string()));
+                                            use std::os::windows::ffi::OsStrExt;
+                                            let exe_w: Vec<u16> = dest.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+                                            let open_w: Vec<u16> = "open\0".encode_utf16().collect();
+                                            unsafe {
+                                                windows_sys::Win32::UI::Shell::ShellExecuteW(
+                                                    0 as _,
+                                                    open_w.as_ptr(),
+                                                    exe_w.as_ptr(),
+                                                    core::ptr::null(),
+                                                    core::ptr::null(),
+                                                    windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL as i32,
+                                                );
+                                            }
+                                        }
+                                        Ok(s) => {
+                                            let _ = proxy_ev.send_event(UserEvent::Log(format!("[UPDATE] 下载安装包失败 (代码: {:?})，建议前往 GitHub 手动下载", s.code())));
+                                        }
+                                        Err(e) => {
+                                            let _ = proxy_ev.send_event(UserEvent::Log(format!("[UPDATE] 调用系统下载器异常: {}，建议前往 GitHub 手动下载", e)));
+                                        }
+                                    }
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
