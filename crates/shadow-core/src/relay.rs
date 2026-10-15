@@ -85,7 +85,17 @@ impl BoundRelayServer {
         loop {
             tokio::select! {
                 res = self.listener.accept() => {
-                    let (inbound, client_addr) = res?;
+                    let (inbound, client_addr) = match res {
+                        Ok(conn) => conn,
+                        Err(e) => {
+                            // 关键修复：系统休眠/挂起唤醒时，Windows 网络栈可能抛出瞬态错误
+                            // 绝不能直接退出 run() 循环导致中继永久死锁，需记录日志并平稳重试恢复
+                            tracing::warn!("本地透明中继 accept 遇到瞬态错误 (休眠唤醒或网络栈抖动): {}，正在恢复监听...", e);
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                            continue;
+                        }
+                    };
+                    let _ = inbound.set_nodelay(true);
                     let config = self.config.clone();
                     let stats = Arc::clone(&self.stats);
                     let router = Arc::clone(&self.router);
@@ -291,6 +301,7 @@ async fn handle_inbound_connection(
                 }
             };
 
+            let _ = outbound.set_nodelay(true);
             match tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await {
                 Ok((from_client, from_server)) => {
                     stats.bytes_sent.fetch_add(from_client, Ordering::Relaxed);
@@ -323,6 +334,7 @@ async fn handle_inbound_connection(
                 return Err(RelayError::UpstreamConnect(format!("上游 SOCKS5 握手超时或失败: {}", e)));
             }
 
+            let _ = upstream.set_nodelay(true);
             match tokio::io::copy_bidirectional(&mut inbound, &mut upstream).await {
                 Ok((from_client, from_server)) => {
                     stats.bytes_sent.fetch_add(from_client, Ordering::Relaxed);

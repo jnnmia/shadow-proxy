@@ -136,13 +136,11 @@ impl TargetAddr {
     }
 }
 
-/// 执行 SOCKS5 握手并连接至目标地址 (RFC 1928)
-pub async fn socks5_connect<S: AsyncRead + AsyncWrite + Unpin>(
+/// 执行 SOCKS5 认证协商握手 (RFC 1928 / RFC 1929)
+pub async fn socks5_handshake<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
-    target: &TargetAddr,
     auth: Option<(&str, &str)>,
 ) -> Result<()> {
-    // 1. 发送认证协商
     match auth {
         Some((_user, _pass)) => {
             // 支持无认证 (0x00) 与用户名/密码认证 (0x02)
@@ -165,6 +163,7 @@ pub async fn socks5_connect<S: AsyncRead + AsyncWrite + Unpin>(
     match resp[1] {
         0x00 => {
             // 无需认证
+            Ok(())
         }
         0x02 => {
             // 用户名/密码认证 (RFC 1929)
@@ -186,17 +185,28 @@ pub async fn socks5_connect<S: AsyncRead + AsyncWrite + Unpin>(
                 if auth_resp[1] != 0x00 {
                     return Err(ProtocolError::Socks5("SOCKS5 用户名/密码验证失败".into()));
                 }
+                Ok(())
             } else {
-                return Err(ProtocolError::Socks5("服务端要求认证但未提供凭据".into()));
+                Err(ProtocolError::Socks5("服务端要求认证但未提供凭据".into()))
             }
         }
         0xff => {
-            return Err(ProtocolError::Socks5("服务端拒绝了所有可用的认证方式".into()));
+            Err(ProtocolError::Socks5("服务端拒绝了所有可用的认证方式".into()))
         }
         other => {
-            return Err(ProtocolError::Socks5(format!("不支持的认证类型: 0x{:02x}", other)));
+            Err(ProtocolError::Socks5(format!("不支持的认证类型: 0x{:02x}", other)))
         }
     }
+}
+
+/// 执行 SOCKS5 握手并连接至目标地址 (RFC 1928)
+pub async fn socks5_connect<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut S,
+    target: &TargetAddr,
+    auth: Option<(&str, &str)>,
+) -> Result<()> {
+    // 1. 发送并完成认证协商
+    socks5_handshake(stream, auth).await?;
 
     // 2. 发送 CONNECT 请求 (0x01)
     let mut req = Vec::with_capacity(32);
@@ -266,4 +276,23 @@ pub async fn socks5_connect<S: AsyncRead + AsyncWrite + Unpin>(
     }
 
     Ok(())
+}
+
+/// 探测上游代理连通性及 SOCKS5 认证握手状态，返回握手耗时
+pub async fn check_upstream_health(
+    upstream: SocketAddr,
+    auth: Option<(&str, &str)>,
+    timeout_dur: std::time::Duration,
+) -> Result<std::time::Duration> {
+    let start = std::time::Instant::now();
+    let mut stream = tokio::time::timeout(timeout_dur, tokio::net::TcpStream::connect(upstream))
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "连接上游代理超时"))?
+        .map_err(ProtocolError::Io)?;
+
+    tokio::time::timeout(timeout_dur, socks5_handshake(&mut stream, auth))
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "上游 SOCKS5 握手超时"))??;
+
+    Ok(start.elapsed())
 }

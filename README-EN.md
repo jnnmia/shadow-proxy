@@ -17,6 +17,7 @@ Requires no administrator privileges, installs no virtual network card (TUN/TAP)
 | Strict DNS Anti-Leak | RFC 2544 Fake-IP memory mapping + local UDP/53 interception | Zero plaintext DNS leakage; all lookups routed via SOCKS5 or DoT |
 | QUIC Blocking | Intercepts UDP/443 and returns connection refused | Forces browsers and modern network stacks to fall back cleanly to TCP proxy tunnels |
 | Dual-Architecture Support | Automatic PE Machine parsing (x86 / x64) | Automatically detects target architecture and dispatches 32-bit or 64-bit hook modules |
+| Upstream Health Probe & Tri-State | Pre-flight SOCKS5 handshake + background heartbeat | Prevents false ONLINE illusion when upstream is down; auto-recovery & degradation |
 
 ---
 
@@ -26,8 +27,8 @@ Download the latest version from [GitHub Releases](https://github.com/jnnmia/sha
 
 | Package | Filename | Description |
 |---|---|---|
-| Installer | `ShadowProxy-Setup-v0.1.0.exe` | Standalone setup wizard; configures Desktop/Start Menu shortcuts and uninstaller |
-| Portable | `ShadowProxy-v0.1.0-windows-portable.zip` | Standalone archive; extract and double-click `start-gui.bat` to run |
+| Installer | `ShadowProxy-Setup-v0.1.1.exe` | Standalone setup wizard; configures Desktop/Start Menu shortcuts and uninstaller |
+| Portable | `ShadowProxy-v0.1.1-windows-portable.zip` | Standalone archive; extract and double-click `start-gui.bat` to run |
 
 ---
 

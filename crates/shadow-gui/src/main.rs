@@ -33,6 +33,8 @@ enum UserEvent {
     Ipc(String),
     Dropped(PathBuf),
     Tick,
+    SystemSuspend,
+    SystemResume,
 }
 
 #[derive(Deserialize, Debug)]
@@ -120,9 +122,29 @@ struct TrackedProcess {
     icon: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RelayStatus {
+    Offline,
+    Online,
+    Degraded,
+}
+
+impl RelayStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RelayStatus::Offline => "OFFLINE",
+            RelayStatus::Online => "ONLINE",
+            RelayStatus::Degraded => "DEGRADED",
+        }
+    }
+}
+
 #[derive(Serialize, Debug)]
 struct FullState {
     relay_active: bool,
+    relay_status: String,
+    upstream_healthy: bool,
     relay_addr: Option<String>,
     upstream_proxy: String,
     strict_dns: bool,
@@ -142,6 +164,8 @@ struct ActiveRelay {
     shutdown_tx: broadcast::Sender<()>,
     _stats: Arc<TrafficStats>,
     local_addr: SocketAddr,
+    health_rx: tokio::sync::watch::Receiver<(RelayStatus, Option<u64>)>,
+    resume_notify: Arc<tokio::sync::Notify>,
 }
 
 fn presets_file_path() -> Option<PathBuf> {
@@ -457,18 +481,101 @@ impl AppState {
         std::env::set_var("SHADOW_STRICT_DNS", dns_flag);
         std::env::set_var("GHOST_STRICT_DNS", dns_flag);
 
+        // 4. 前置同步快速探活 (800ms) 决定启动初始健康状态，彻底杜绝虚假 ONLINE
+        let initial_probe = self.rt.block_on(async {
+            shadow_core::check_upstream_health(
+                upstream_proxy,
+                None,
+                std::time::Duration::from_millis(800),
+            )
+            .await
+        });
+
+        let (init_status, init_ping) = match initial_probe {
+            Ok(dur) => (RelayStatus::Online, Some(dur.as_millis() as u64)),
+            Err(_) => (RelayStatus::Degraded, None),
+        };
+
+        let (health_tx, health_rx) = tokio::sync::watch::channel((init_status, init_ping));
+        let mut health_shutdown_rx = shutdown_tx.subscribe();
+        let resume_notify = Arc::new(tokio::sync::Notify::new());
+        let resume_rx = Arc::clone(&resume_notify);
+
+        // 5. 启动后台健康心跳伴生协程 (每 2.5s 探活一次，并支持系统唤醒即时探活自愈)
+        let probe_proxy = upstream_proxy;
+        self.rt.spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(2500));
+            interval.tick().await;
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let res = match shadow_core::check_upstream_health(
+                            probe_proxy,
+                            None,
+                            std::time::Duration::from_millis(800),
+                        )
+                        .await
+                        {
+                            Ok(dur) => (RelayStatus::Online, Some(dur.as_millis() as u64)),
+                            Err(_) => (RelayStatus::Degraded, None),
+                        };
+
+                        if health_tx.send(res).is_err() {
+                            break;
+                        }
+                    }
+                    _ = resume_rx.notified() => {
+                        // 系统休眠唤醒后，连续快速探测 3 次（每次间隔 1 秒），以便在上游代理就绪的第一时间自愈恢复
+                        for _ in 0..3 {
+                            let res = match shadow_core::check_upstream_health(
+                                probe_proxy,
+                                None,
+                                std::time::Duration::from_millis(800),
+                            )
+                            .await
+                            {
+                                Ok(dur) => (RelayStatus::Online, Some(dur.as_millis() as u64)),
+                                Err(_) => (RelayStatus::Degraded, None),
+                            };
+                            let is_online = res.0 == RelayStatus::Online;
+                            let _ = health_tx.send(res);
+                            if is_online {
+                                break;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                        }
+                    }
+                    _ = health_shutdown_rx.recv() => {
+                        break;
+                    }
+                }
+            }
+        });
+
         self.relay = Some(ActiveRelay {
             shutdown_tx,
             _stats: stats,
             local_addr,
+            health_rx,
+            resume_notify,
         });
         self.upstream_proxy = proxy_str.to_string();
         self.strict_dns = strict_dns;
         self.save_config();
-        self.last_log = Some(format!(
-            "[RELAY] 本地透明中继已启动在 {}, 上游: {}",
-            local_addr, upstream_proxy
-        ));
+
+        if init_status == RelayStatus::Online {
+            let ms_str = init_ping.map(|m| format!(" ({} ms)", m)).unwrap_or_default();
+            self.last_log = Some(format!(
+                "[RELAY] 本地透明中继已启动在 {}, 上游代理握手正常{}",
+                local_addr, ms_str
+            ));
+        } else {
+            self.last_log = Some(format!(
+                "[WARN] 本地透明中继已启动在 {}, 但上游代理 ({}) 无法连通，请确认代理软件已启动！",
+                local_addr, upstream_proxy
+            ));
+        }
 
         Ok(local_addr)
     }
@@ -477,6 +584,41 @@ impl AppState {
         if let Some(active) = self.relay.take() {
             let _ = active.shutdown_tx.send(());
             self.last_log = Some("[RELAY] 本地透明中继已停止".to_string());
+        }
+    }
+
+    fn handle_system_resume(&mut self) {
+        self.last_log = Some("[SYS] 检测到系统休眠恢复，正在执行网络自愈与探活...".to_string());
+        // 1. 清理休眠前挂起的陈旧会话
+        self.tracker.clear();
+        self.update_process_statuses();
+
+        // 2. 检查本地监听端口是否仍然活跃，若因休眠被系统关闭则自动平滑拉起
+        if let Some(port) = self.relay_port {
+            if self.relay.is_some() {
+                let check_addr = SocketAddr::from(([127, 0, 0, 1], port));
+                let is_open = std::net::TcpStream::connect_timeout(
+                    &check_addr,
+                    std::time::Duration::from_millis(80),
+                )
+                .is_ok();
+
+                if !is_open {
+                    let proxy = self.upstream_proxy.clone();
+                    let dns = self.strict_dns;
+                    let _ = self.start_relay(&proxy, dns);
+                    self.last_log = Some(format!(
+                        "[RELAY] 唤醒后检测到本地端口 {} 异常关闭，已自动平滑自愈重启中继",
+                        port
+                    ));
+                    return;
+                }
+            }
+        }
+
+        // 3. 通知后台健康探活协程立即连续探测
+        if let Some(ref r) = self.relay {
+            r.resume_notify.notify_waiters();
         }
     }
 }
@@ -611,6 +753,21 @@ impl AppState {
             let proxy = self.upstream_proxy.clone();
             let dns = self.strict_dns;
             self.start_relay(&proxy, dns)?;
+        }
+
+        // 检查当前中继是否处于降级状态 (上游未启动/不可达)
+        let is_upstream_degraded = if let Some(ref r) = self.relay {
+            let (st, _) = *r.health_rx.borrow();
+            st == RelayStatus::Degraded
+        } else {
+            false
+        };
+
+        if is_upstream_degraded {
+            self.last_log = Some(format!(
+                "[WARN] 警告：上游代理 ({}) 尚未就绪！已注入进程 {:?} 的网络请求可能失败，请尽快启动代理软件",
+                self.upstream_proxy, file_name
+            ));
         }
 
         let arch = detect_architecture(&path)
@@ -780,8 +937,20 @@ impl AppState {
         let rules = self.router.read().unwrap().rules.clone();
         let sessions = self.tracker.list_sessions(60);
 
+        let (relay_status, dynamic_ping) = if let Some(ref r) = self.relay {
+            let (st, p) = *r.health_rx.borrow();
+            (st.as_str().to_string(), p)
+        } else {
+            ("OFFLINE".to_string(), None)
+        };
+
+        let upstream_healthy = relay_status == "ONLINE";
+        let ping_ms = dynamic_ping.or(self.ping_ms);
+
         FullState {
             relay_active: self.relay.is_some(),
+            relay_status,
+            upstream_healthy,
             relay_addr: self.relay.as_ref().map(|r| r.local_addr.to_string()),
             upstream_proxy: self.upstream_proxy.clone(),
             strict_dns: self.strict_dns,
@@ -794,7 +963,7 @@ impl AppState {
             rules,
             sessions,
             last_log: self.last_log.clone(),
-            ping_ms: self.ping_ms,
+            ping_ms,
         }
     }
 }
@@ -1033,6 +1202,61 @@ fn run_app() -> anyhow::Result<()> {
     let proxy_ipc = proxy.clone();
     let proxy_drop = proxy.clone();
 
+    // 监听 Windows 系统级电源广播事件 (WM_POWERBROADCAST)，精准捕获休眠挂起与唤醒恢复
+    unsafe {
+        #[link(name = "comctl32")]
+        extern "system" {
+            fn SetWindowSubclass(
+                hWnd: windows_sys::Win32::Foundation::HWND,
+                pfnSubclass: unsafe extern "system" fn(
+                    windows_sys::Win32::Foundation::HWND,
+                    u32,
+                    usize,
+                    isize,
+                    usize,
+                    usize,
+                ) -> isize,
+                uIdSubclass: usize,
+                dwRefData: usize,
+            ) -> windows_sys::Win32::Foundation::BOOL;
+
+            fn DefSubclassProc(
+                hWnd: windows_sys::Win32::Foundation::HWND,
+                uMsg: u32,
+                wParam: usize,
+                lParam: isize,
+            ) -> isize;
+        }
+
+        unsafe extern "system" fn power_subclass_proc(
+            hwnd: windows_sys::Win32::Foundation::HWND,
+            msg: u32,
+            wparam: usize,
+            lparam: isize,
+            _id: usize,
+            ref_data: usize,
+        ) -> isize {
+            const WM_POWERBROADCAST: u32 = 0x0218;
+            const PBT_APMSUSPEND: usize = 0x0004;
+            const PBT_APMRESUMEAUTOMATIC: usize = 0x0012;
+            const PBT_APMRESUMESUSPEND: usize = 0x0007;
+
+            if msg == WM_POWERBROADCAST {
+                let proxy_ref = &*(ref_data as *const tao::event_loop::EventLoopProxy<UserEvent>);
+                if wparam == PBT_APMSUSPEND {
+                    let _ = proxy_ref.send_event(UserEvent::SystemSuspend);
+                } else if wparam == PBT_APMRESUMEAUTOMATIC || wparam == PBT_APMRESUMESUSPEND {
+                    let _ = proxy_ref.send_event(UserEvent::SystemResume);
+                }
+            }
+
+            DefSubclassProc(hwnd, msg, wparam, lparam)
+        }
+
+        let proxy_ptr = Box::into_raw(Box::new(proxy.clone()));
+        SetWindowSubclass(hwnd, power_subclass_proc, 2026, proxy_ptr as usize);
+    }
+
     let builder = WebViewBuilder::new()
         .with_background_color((9, 13, 20, 255))
         .with_html(include_str!("ui.html"))
@@ -1070,13 +1294,24 @@ fn run_app() -> anyhow::Result<()> {
         });
     }
 
-    // 1 秒定时发送 Tick 维持流量与状态轮询（在确认 WebView2 与状态初始化成功后启动）
+    // 1 秒定时发送 Tick 维持流量与状态轮询，并内置时钟跳跃休眠唤醒双保险感知
     {
         let proxy_tick = proxy.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_millis(1000));
-            if proxy_tick.send_event(UserEvent::Tick).is_err() {
-                break;
+        std::thread::spawn(move || {
+            let mut last_tick = std::time::Instant::now();
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                let elapsed = last_tick.elapsed();
+                last_tick = std::time::Instant::now();
+
+                // 若原本休眠 1000ms 的线程实际历时超过 3000ms，说明系统经历了睡眠/休眠/挂起恢复
+                if elapsed > std::time::Duration::from_millis(3000) {
+                    let _ = proxy_tick.send_event(UserEvent::SystemResume);
+                }
+
+                if proxy_tick.send_event(UserEvent::Tick).is_err() {
+                    break;
+                }
             }
         });
     }
@@ -1086,6 +1321,19 @@ fn run_app() -> anyhow::Result<()> {
 
         match event {
             Event::UserEvent(user_event) => match user_event {
+                UserEvent::SystemSuspend => {
+                    state.last_log = Some("[SYS] 系统准备进入休眠/睡眠模式...".to_string());
+                }
+                UserEvent::SystemResume => {
+                    state.handle_system_resume();
+                    let full = state.get_full_state();
+                    if let Ok(json) = serde_json::to_string(&full) {
+                        let _ = webview.evaluate_script(&format!(
+                            "window.updateState({});",
+                            json
+                        ));
+                    }
+                }
                 UserEvent::Tick => {
                     state.update_process_statuses();
                     let full = state.get_full_state();
@@ -1153,7 +1401,9 @@ fn run_app() -> anyhow::Result<()> {
                                     state.strict_dns = strict_dns;
                                     state.save_config();
                                     if state.relay.is_some() {
-                                        let _ = state.start_relay(&state.upstream_proxy.clone(), strict_dns);
+                                        if let Err(e) = state.start_relay(&state.upstream_proxy.clone(), strict_dns) {
+                                            state.last_log = Some(format!("[RELAY] 重启中继失败: {}", e));
+                                        }
                                     }
                                 } else {
                                     state.last_log = Some(format!("[CONFIG] 忽略无效上游代理格式: {}", clean));
@@ -1173,7 +1423,9 @@ fn run_app() -> anyhow::Result<()> {
                                         state.upstream_proxy = clean.clone();
                                         if state.relay.is_some() {
                                             let dns = strict_dns.unwrap_or(state.strict_dns);
-                                            let _ = state.start_relay(&clean, dns);
+                                            if let Err(e) = state.start_relay(&clean, dns) {
+                                                state.last_log = Some(format!("[RELAY] 重启中继失败: {}", e));
+                                            }
                                         }
                                     }
                                 }

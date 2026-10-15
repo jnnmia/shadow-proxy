@@ -6,7 +6,7 @@ pub mod relay;
 pub mod router;
 pub mod session;
 
-pub use protocol::{ProtocolError, TargetAddr};
+pub use protocol::{check_upstream_health, socks5_handshake, ProtocolError, TargetAddr};
 pub use relay::{BoundRelayServer, RelayConfig, RelayError, RelayServer, TrafficStats};
 pub use router::{RouteAction, RouteDecision, RuleItem, RulePattern, Router};
 pub use session::{SessionRecord, SessionStatus, SessionTracker};
@@ -515,6 +515,88 @@ mod tests {
         let mut res = [0u8; 4];
         client.read_exact(&mut res).await.unwrap();
         assert_eq!(&res, b"PONG");
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_check_upstream_health_offline_refused() {
+        // 分配一个未被任何进程监听的本地端口
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let unused_addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        // 探活未启动的上游代理，预期报错拒绝或超时，决不可误判为健康
+        let res = check_upstream_health(unused_addr, None, tokio::time::Duration::from_millis(500)).await;
+        assert!(res.is_err(), "未启动的上游代理不可被误判为健康上线");
+    }
+
+    #[tokio::test]
+    async fn test_check_upstream_health_online_success() {
+        // 启动标准 Mock SOCKS5 探活服务端
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let socks_addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 3];
+            socket.read_exact(&mut buf).await.unwrap();
+            assert_eq!(buf[0], 0x05); // SOCKS5
+            socket.write_all(&[0x05, 0x00]).await.unwrap(); // NO_AUTH 握手成功
+        });
+
+        let res = check_upstream_health(socks_addr, None, tokio::time::Duration::from_millis(1000)).await;
+        assert!(res.is_ok(), "已启动的上游 SOCKS5 代理应成功通过健康握手");
+    }
+
+    #[tokio::test]
+    async fn test_relay_upstream_down_handled_gracefully() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dead_proxy = listener.local_addr().unwrap();
+        drop(listener);
+
+        let relay_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_listener.local_addr().unwrap();
+        drop(relay_listener);
+
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let tracker = Arc::new(SessionTracker::default());
+
+        let relay_server = RelayServer::with_router_and_tracker(
+            RelayConfig {
+                listen_addr: relay_addr,
+                upstream_proxy: dead_proxy,
+                proxy_auth: None,
+                strict_dns: false,
+                dns_over_tcp_server: None,
+                handshake_timeout: Some(tokio::time::Duration::from_millis(300)),
+            },
+            Arc::new(std::sync::RwLock::new(Router::preset_global_proxy())),
+            Arc::clone(&tracker),
+        );
+
+        tokio::spawn(async move {
+            let _ = relay_server.run(shutdown_rx).await;
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let mut client = TcpStream::connect(relay_addr).await.unwrap();
+        let target = TargetAddr::Ip("1.1.1.1:80".parse().unwrap());
+        client.write_all(&target.encode()).await.unwrap();
+        client.write_all(b"TEST").await.unwrap();
+
+        let mut buf = [0u8; 10];
+        let read_res = client.read(&mut buf).await;
+        match read_res {
+            Ok(0) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+            other => panic!("预期上游离线时连接关闭或重置，实际返回: {:?}", other),
+        }
+
+        let sessions = tracker.list_sessions(5);
+        assert!(!sessions.is_empty());
+        assert_eq!(sessions[0].status, SessionStatus::Failed);
 
         let _ = shutdown_tx.send(());
     }

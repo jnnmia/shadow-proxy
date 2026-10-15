@@ -136,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
     let relay_config = RelayConfig {
         listen_addr,
         upstream_proxy: upstream_addr,
-        proxy_auth,
+        proxy_auth: proxy_auth.clone(),
         strict_dns: args.strict_dns,
         dns_over_tcp_server: Some("223.5.5.5:53".parse().unwrap()),
         handshake_timeout: None,
@@ -179,6 +179,32 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("本地透明中继就绪: {}", local_relay_addr);
     tracing::info!("上游代理目标: {}", upstream_addr);
+
+    // 上游代理健康探活验证，避免虚假就绪
+    let auth_ref = proxy_auth.as_ref().map(|(u, p)| (u.as_str(), p.as_str()));
+    match shadow_core::check_upstream_health(
+        upstream_addr,
+        auth_ref,
+        std::time::Duration::from_millis(1000),
+    )
+    .await
+    {
+        Ok(dur) => {
+            tracing::info!(
+                "上游代理健康检查通过: {} (延迟: {} ms)",
+                upstream_addr,
+                dur.as_millis()
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                "警告: 上游代理 [{}] 无法连接: {}！请确认代理软件是否已启动，否则目标流量将被阻断。",
+                upstream_addr,
+                e
+            );
+        }
+    }
+
     tracing::info!("路由分流预设: {}", args.rules);
     tracing::info!("严格 DNS 防泄漏: {}", args.strict_dns);
 
