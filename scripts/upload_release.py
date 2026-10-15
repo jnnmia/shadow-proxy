@@ -20,8 +20,8 @@ if hasattr(sys.stdout, "reconfigure"):
 
 REPO_OWNER = "jnnmia"
 REPO_NAME = "shadow-proxy"
-TAG_NAME = "v0.1.0"
-RELEASE_NAME = "ShadowProxy v0.1.0"
+TAG_NAME = "v0.1.2"
+RELEASE_NAME = "ShadowProxy v0.1.2"
 
 def get_github_token():
     input_data = "protocol=https\nhost=github.com\n\n"
@@ -86,10 +86,21 @@ def main():
         else:
             raise
 
-    # 2. 如果不存在，则创建 Release
     release_body = (
         f"## ShadowProxy {TAG_NAME}\n\n"
         "Windows 进程级透明代理引擎，支持 32 位与 64 位双架构程序注入、DNS 严格防泄漏与 QUIC 降级阻断。\n\n"
+        "### 新增特性与改进 (v0.1.2)\n"
+        "- 从 GitHub 检查更新与一键安装：\n"
+        "  - 应用启动后静默自检，发现新版本时在侧边栏显示呼吸光标；\n"
+        "  - 侧边栏底部常驻“检查更新”按钮与当前版本号；\n"
+        "  - 暗黑赛博风更新弹窗，展示新版发布时间与更新日志；\n"
+        "  - 一键后台下载安装包并拉起安装向导，内置防刷频与并发下载互斥锁；\n"
+        "- 核心稳定性与安全加固：\n"
+        "  - 移除 cmd.exe 调用，重构为直接调用 Windows 原生 ShellExecuteW API，杜绝命令行参数注入漏洞；\n"
+        "  - 安装包路径与文件名严密白名单清洗，杜绝路径穿越；\n"
+        "  - 严格限制下载源仅放行 GitHub 官方发布源，curl.exe 设置超时断开；\n"
+        "  - 系统休眠挂起与唤醒恢复 (WM_POWERBROADCAST) 自愈恢复机制；\n"
+        "  - 遵循零 Emoji 规范。\n\n"
         "### 产物说明\n"
         f"- **ShadowProxy-Setup-{TAG_NAME}.exe**: 单文件独立安装包，内置图形化向导，自动配置桌面与开始菜单快捷方式，支持完整控制面板卸载。\n"
         f"- **ShadowProxy-{TAG_NAME}-windows-portable.zip**: 免安装绿色便携包，解压后双击 `start-gui.bat` 即可直接使用。\n"

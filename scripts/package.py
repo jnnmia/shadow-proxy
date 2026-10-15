@@ -248,7 +248,7 @@ exit
 
 INNO_SETUP_TEMPLATE = r'''; ShadowProxy Inno Setup 脚本
 #define MyAppName "ShadowProxy"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.1.2"
 #define MyAppPublisher "ShadowProxy Team"
 #define MyAppURL "https://github.com/jnnmia/shadow-proxy"
 #define MyAppExeName "bin\shadow-gui.exe"
