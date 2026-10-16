@@ -52,6 +52,38 @@ ShadowProxy 是一款基于 Rust 开发的 Windows 进程级透明代理工具�
 
 ---
 
+## AI 编程助手代理实践 (Antigravity & Codex)
+
+### 适用场景
+
+| 工具 / 场景 | 典型痛点 | ShadowProxy 解决方案 |
+|---|---|---|
+| Google Antigravity | 内部 Electron、Python 侧车与 gRPC 后台常忽略系统代理 | 注入主进程并自动穿透子进程树，强制所有网络通信走中继 |
+| OpenAI Codex / Copilot | CLI 命令行工具、Node.js 运行时或特定语言插件连接超时 | 从 Winsock 底层捕获流量，无需针对不同语言单独配环境变量 |
+| 严格网络与 DNS 审计 | 域名解析外泄导致连接阻断或凭据泄漏 | RFC 2544 Fake-IP 本地映射 + 远端 SOCKS5 域名解析，杜绝 DNS 泄漏 |
+
+### 快速配置教程
+
+- **1. 图形界面拖拽注入 (推荐)**
+  - 启动 `ShadowProxy` 并确认状态显示为 `ONLINE`。
+  - 将桌面上的 Antigravity 快捷方式（`.lnk`）或安装目录可执行文件（`Antigravity.exe`）拖入主界面，点击「启动并注入代理」。
+  - 宿主程序及其派生的所有语言服务、扩展进程将自动纳入代理隧道。
+
+- **2. 对已运行进程附加代理 (Runtime Attach)**
+  - 若 Antigravity、Cursor 或 VSCode (含 Codex 插件) 已在运行，进入「进程列表」视口。
+  - 在搜索框输入目标进程名（如 `Antigravity.exe` 或 `Code.exe`），点击「附加注入」即可实时捕获后续网络流。
+
+- **3. 命令行静默启动**
+  ```powershell
+  # 代理启动 Antigravity
+  .\start-cli.bat --proxy 127.0.0.1:10808 --target "$env:LOCALAPPDATA\Programs\Antigravity\Antigravity.exe"
+
+  # 代理启动开发终端或编辑器
+  .\start-cli.bat --proxy 127.0.0.1:10808 --target "C:\Program Files\Microsoft VS Code\Code.exe"
+  ```
+
+---
+
 ## 架构组成
 
 | 模块 | 目录 | 职责与技术选型 |

@@ -52,6 +52,38 @@ Download the latest version from [GitHub Releases](https://github.com/jnnmia/sha
 
 ---
 
+## AI Coding Assistants Setup (Antigravity & Codex)
+
+### Use Cases
+
+| Tool / Environment | Typical Pain Points | ShadowProxy Solution |
+|---|---|---|
+| Google Antigravity | Internal Electron, Python sidecars, and gRPC backends ignore system proxies | Injects into the host process and tracks entire child process trees |
+| OpenAI Codex / Copilot | Language server sub-processes and CLI tools fail to respect env vars | Intercepts at the Winsock C-ABI layer without per-runtime config |
+| Strict DNS & Network Isolation | Plaintext DNS queries trigger timeouts or leak target hostnames | RFC 2544 Fake-IP mapping with remote SOCKS5 DNS resolution |
+
+### Step-by-Step Tutorial
+
+- **1. Drag & Drop Injection via GUI (Recommended)**
+  - Start `ShadowProxy` and ensure the status chip displays `ONLINE`.
+  - Drag and drop your Antigravity shortcut (`.lnk`) or executable (`Antigravity.exe`) into the window.
+  - Click "Launch with Proxy"; Antigravity and all spawned worker processes will immediately route through the relay.
+
+- **2. Attach to Running Processes (Runtime Attach)**
+  - If Antigravity, Cursor, or VSCode (with Codex extensions) is already running, switch to the "Processes" tab.
+  - Filter for `Antigravity.exe` or `Code.exe` in the search box, then click "Attach" to intercept live network sockets.
+
+- **3. Command Line Launch**
+  ```powershell
+  # Launch Antigravity under transparent proxy
+  .\start-cli.bat --proxy 127.0.0.1:10808 --target "$env:LOCALAPPDATA\Programs\Antigravity\Antigravity.exe"
+
+  # Launch editor with full child process tunneling
+  .\start-cli.bat --proxy 127.0.0.1:10808 --target "C:\Program Files\Microsoft VS Code\Code.exe"
+  ```
+
+---
+
 ## Architecture
 
 | Crate | Directory | Responsibility |
