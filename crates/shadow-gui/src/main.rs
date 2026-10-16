@@ -1180,7 +1180,7 @@ fn list_system_processes() -> Vec<SystemProcessItem> {
         }
         CloseHandle(snapshot);
     }
-    result.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    result.sort_by_key(|a| a.name.to_ascii_lowercase());
     result
 }
 
@@ -1979,7 +1979,7 @@ fn run_app() -> anyhow::Result<()> {
                                             url_w.as_ptr(),
                                             core::ptr::null(),
                                             core::ptr::null(),
-                                            SW_SHOWNORMAL as i32,
+                                            SW_SHOWNORMAL,
                                         );
                                     }
                                 }
@@ -2066,7 +2066,7 @@ fn run_app() -> anyhow::Result<()> {
                                                     exe_w.as_ptr(),
                                                     core::ptr::null(),
                                                     core::ptr::null(),
-                                                    windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL as i32,
+                                                    windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
                                                 );
                                             }
                                         }
