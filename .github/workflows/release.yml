@@ -27,17 +27,6 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc, i686-pc-windows-gnu
 
-      - name: Configure Toolchain & Linkers
-        shell: pwsh
-        run: |
-          rustup target add i686-pc-windows-gnu
-          $sysroot = rustc --print sysroot
-          $lldDirs = Get-ChildItem -Path "$sysroot\lib\rustlib" -Recurse -Filter "rust-lld.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.DirectoryName } | Select-Object -Unique
-          foreach ($d in $lldDirs) {
-            Write-Host "Adding linker dir to GITHUB_PATH: $d"
-            echo $d >> $env:GITHUB_PATH
-          }
-
       - name: Install Inno Setup
         shell: pwsh
         run: |
@@ -56,6 +45,24 @@ jobs:
 
       - name: Build 64-bit Components
         run: cargo build --release --workspace
+
+      - name: Set up MSYS2 for 32-bit MinGW
+        uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: MINGW32
+          install: mingw-w64-i686-gcc
+          update: false
+
+      - name: Add MinGW32 to GITHUB_PATH
+        shell: pwsh
+        run: |
+          $msysPath = "${{ steps.msys2.outputs.msys2-location }}"
+          $mingw32Bin = "$msysPath\mingw32\bin"
+          Write-Host "Adding $mingw32Bin to GITHUB_PATH"
+          Add-Content -Path $env:GITHUB_PATH -Value $mingw32Bin
+          Write-Host "MinGW32 GCC verification:"
+          & "$mingw32Bin\i686-w64-mingw32-gcc.exe" --version
 
       - name: Build 32-bit Components
         run: cargo build --release --target i686-pc-windows-gnu -p shadow-hook -p shadow-injector
