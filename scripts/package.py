@@ -42,26 +42,48 @@ $appName = "ShadowProxy"
 $appVersion = "0.2.0"
 $sourceDir = $PSScriptRoot
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\$appName"
+$isZh = ([System.Globalization.CultureInfo]::CurrentUICulture.Name -like "zh*")
 
-Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host "       ShadowProxy 进程级透明代理引擎 - 正在安装..." -ForegroundColor Cyan
-Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host "源文件路径: $sourceDir"
-Write-Host "目标安装路径: $installDir"
-Write-Host ""
+if ($isZh) {
+    Write-Host "========================================================" -ForegroundColor Cyan
+    Write-Host "       ShadowProxy 进程级透明代理引擎 - 正在安装..." -ForegroundColor Cyan
+    Write-Host "========================================================" -ForegroundColor Cyan
+    Write-Host "源文件路径: $sourceDir"
+    Write-Host "目标安装路径: $installDir"
+    Write-Host ""
+} else {
+    Write-Host "========================================================" -ForegroundColor Cyan
+    Write-Host "   ShadowProxy Process-level Proxy Engine - Installing..." -ForegroundColor Cyan
+    Write-Host "========================================================" -ForegroundColor Cyan
+    Write-Host "Source directory: $sourceDir"
+    Write-Host "Target directory: $installDir"
+    Write-Host ""
+}
 
 # 1. 检查并终止正在运行的旧实例
 $runningProcs = Get-Process -Name "shadow-gui", "shadow-cli" -ErrorAction SilentlyContinue
 if ($runningProcs) {
-    Write-Host "[1/5] 检测到正在运行的旧进程，正在安全退出..." -ForegroundColor Yellow
+    if ($isZh) {
+        Write-Host "[1/5] 检测到正在运行的旧进程，正在安全退出..." -ForegroundColor Yellow
+    } else {
+        Write-Host "[1/5] Terminating running instances..." -ForegroundColor Yellow
+    }
     $runningProcs | Stop-Process -Force
     Start-Sleep -Seconds 1
 } else {
-    Write-Host "[1/5] 无正在运行的冲突进程。" -ForegroundColor Green
+    if ($isZh) {
+        Write-Host "[1/5] 无正在运行的冲突进程。" -ForegroundColor Green
+    } else {
+        Write-Host "[1/5] No conflicting processes found." -ForegroundColor Green
+    }
 }
 
 # 2. 复制程序文件至目标目录
-Write-Host "[2/5] 正在部署核心程序文件..." -ForegroundColor Cyan
+if ($isZh) {
+    Write-Host "[2/5] 正在部署核心程序文件..." -ForegroundColor Cyan
+} else {
+    Write-Host "[2/5] Deploying program files..." -ForegroundColor Cyan
+}
 if (-not (Test-Path $installDir)) {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 }
@@ -85,7 +107,11 @@ foreach ($item in $itemsToCopy) {
 }
 
 # 3. 创建桌面快捷方式
-Write-Host "[3/5] 正在创建桌面快捷方式..." -ForegroundColor Cyan
+if ($isZh) {
+    Write-Host "[3/5] 正在创建桌面快捷方式..." -ForegroundColor Cyan
+} else {
+    Write-Host "[3/5] Creating desktop shortcut..." -ForegroundColor Cyan
+}
 $wsh = New-Object -ComObject WScript.Shell
 $desktopDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
 $desktopLnkPath = Join-Path $desktopDir "$appName.lnk"
@@ -97,11 +123,15 @@ $desktopShortcut.TargetPath = "$env:SystemRoot\System32\wscript.exe"
 $desktopShortcut.Arguments = "`"$vbsPath`""
 $desktopShortcut.WorkingDirectory = $installDir
 $desktopShortcut.IconLocation = "$guiExePath,0"
-$desktopShortcut.Description = "ShadowProxy - 进程级透明代理引擎"
+$desktopShortcut.Description = "ShadowProxy - Transparent Proxy Engine"
 $desktopShortcut.Save()
 
 # 4. 创建开始菜单快捷方式
-Write-Host "[4/5] 正在创建开始菜单快捷方式..." -ForegroundColor Cyan
+if ($isZh) {
+    Write-Host "[4/5] 正在创建开始菜单快捷方式..." -ForegroundColor Cyan
+} else {
+    Write-Host "[4/5] Creating Start Menu shortcuts..." -ForegroundColor Cyan
+}
 $programsDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
 $menuDir = Join-Path $programsDir $appName
 if (-not (Test-Path $menuDir)) {
@@ -114,27 +144,33 @@ $menuShortcut.TargetPath = "$env:SystemRoot\System32\wscript.exe"
 $menuShortcut.Arguments = "`"$vbsPath`""
 $menuShortcut.WorkingDirectory = $installDir
 $menuShortcut.IconLocation = "$guiExePath,0"
-$menuShortcut.Description = "ShadowProxy - 进程级透明代理引擎"
+$menuShortcut.Description = "ShadowProxy - Transparent Proxy Engine"
 $menuShortcut.Save()
 
 $uninstallBatPath = Join-Path $installDir "uninstall.bat"
-$uninstLnkPath = Join-Path $menuDir "卸载 $appName.lnk"
+$uninstLnkName = if ($isZh) { "卸载 $appName.lnk" } else { "Uninstall $appName.lnk" }
+$uninstLnkPath = Join-Path $menuDir $uninstLnkName
 $uninstShortcut = $wsh.CreateShortcut($uninstLnkPath)
 $uninstShortcut.TargetPath = "$env:SystemRoot\System32\cmd.exe"
 $uninstShortcut.Arguments = "/c `"$uninstallBatPath`""
 $uninstShortcut.WorkingDirectory = $installDir
 $uninstShortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,219"
-$uninstShortcut.Description = "卸载 ShadowProxy"
+$uninstShortcut.Description = "Uninstall ShadowProxy"
 $uninstShortcut.Save()
 
 # 5. 注册 Windows 卸载信息 (已安装的应用列表)
-Write-Host "[5/5] 正在注册系统已安装应用信息..." -ForegroundColor Cyan
+if ($isZh) {
+    Write-Host "[5/5] 正在注册系统已安装应用信息..." -ForegroundColor Cyan
+} else {
+    Write-Host "[5/5] Registering Windows uninstall entry..." -ForegroundColor Cyan
+}
 $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$appName"
 if (-not (Test-Path $regPath)) {
     New-Item -Path $regPath -Force | Out-Null
 }
 
-Set-ItemProperty -Path $regPath -Name "DisplayName" -Value "$appName (透明代理引擎)"
+$displayTitle = if ($isZh) { "$appName (透明代理引擎)" } else { "$appName (Transparent Proxy Engine)" }
+Set-ItemProperty -Path $regPath -Name "DisplayName" -Value $displayTitle
 Set-ItemProperty -Path $regPath -Name "DisplayVersion" -Value $appVersion
 Set-ItemProperty -Path $regPath -Name "Publisher" -Value "ShadowProxy Team"
 Set-ItemProperty -Path $regPath -Name "InstallLocation" -Value $installDir
@@ -145,13 +181,21 @@ Set-ItemProperty -Path $regPath -Name "NoRepair" -Value 1 -Type DWord
 
 Write-Host ""
 Write-Host "========================================================" -ForegroundColor Green
-Write-Host "            ShadowProxy 安装完成！" -ForegroundColor Green
-Write-Host "========================================================" -ForegroundColor Green
-Write-Host "程序已成功安装至: $installDir"
-Write-Host "已在桌面与开始菜单生成快捷方式。"
-Write-Host ""
-
-$ans = Read-Host "是否立即启动 ShadowProxy? (Y/n)"
+if ($isZh) {
+    Write-Host "            ShadowProxy 安装完成！" -ForegroundColor Green
+    Write-Host "========================================================" -ForegroundColor Green
+    Write-Host "程序已成功安装至: $installDir"
+    Write-Host "已在桌面与开始菜单生成快捷方式。"
+    Write-Host ""
+    $ans = Read-Host "是否立即启动 ShadowProxy? (Y/n)"
+} else {
+    Write-Host "         ShadowProxy Installation Completed!" -ForegroundColor Green
+    Write-Host "========================================================" -ForegroundColor Green
+    Write-Host "Installed location: $installDir"
+    Write-Host "Shortcuts created on Desktop and Start Menu."
+    Write-Host ""
+    $ans = Read-Host "Launch ShadowProxy now? (Y/n)"
+}
 if ($ans -eq "" -or $ans -match "^[Yy]") {
     Start-Process -FilePath "$env:SystemRoot\System32\wscript.exe" -ArgumentList "`"$vbsPath`"" -WorkingDirectory $installDir
 }
@@ -274,9 +318,21 @@ AppMutex=Global\ShadowProxy_App_Mutex_2026,ShadowProxy_App_Mutex_2026
 CloseApplications=yes
 RestartApplications=no
 CloseApplicationsFilter=*.exe,*.dll
+ShowLanguageDialog=auto
 
 [Languages]
-Name: "default"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimplified"; MessagesFile: "compiler:Default.isl,ChineseSimplified.isl"
+Name: "en"; MessagesFile: "compiler:Default.isl"
+
+[CustomMessages]
+chinesesimplified.CreateDesktopIcon=创建桌面快捷方式(&D)
+en.CreateDesktopIcon=Create a &desktop shortcut
+chinesesimplified.AdditionalIcons=附加图标:
+en.AdditionalIcons=Additional shortcuts:
+chinesesimplified.LaunchProgram=启动 %1
+en.LaunchProgram=Launch %1
+chinesesimplified.UninstallProgram=卸载 %1
+en.UninstallProgram=Uninstall %1
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -286,7 +342,7 @@ Source: "ShadowProxy\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs c
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start-gui.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
-Name: "{autoprograms}\{#MyAppName}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
+Name: "{autoprograms}\{#MyAppName}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start-gui.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
@@ -463,6 +519,9 @@ def main():
     iss_path = scripts_dir / "setup.iss"
     iss_path.write_text(INNO_SETUP_TEMPLATE, encoding="utf-8")
     (dist_dir / "setup.iss").write_text(INNO_SETUP_TEMPLATE, encoding="utf-8")
+    isl_file = scripts_dir / "ChineseSimplified.isl"
+    if isl_file.is_file():
+        shutil.copy2(isl_file, dist_dir / "ChineseSimplified.isl")
     print(f"  √ 已生成 Inno Setup 配置文件: {iss_path}")
 
     # 尝试编译 Inno Setup 安装包

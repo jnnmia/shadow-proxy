@@ -26,9 +26,21 @@ AppMutex=Global\ShadowProxy_App_Mutex_2026,ShadowProxy_App_Mutex_2026
 CloseApplications=yes
 RestartApplications=no
 CloseApplicationsFilter=*.exe,*.dll
+ShowLanguageDialog=auto
 
 [Languages]
-Name: "default"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimplified"; MessagesFile: "compiler:Default.isl,ChineseSimplified.isl"
+Name: "en"; MessagesFile: "compiler:Default.isl"
+
+[CustomMessages]
+chinesesimplified.CreateDesktopIcon=创建桌面快捷方式(&D)
+en.CreateDesktopIcon=Create a &desktop shortcut
+chinesesimplified.AdditionalIcons=附加图标:
+en.AdditionalIcons=Additional shortcuts:
+chinesesimplified.LaunchProgram=启动 %1
+en.LaunchProgram=Launch %1
+chinesesimplified.UninstallProgram=卸载 %1
+en.UninstallProgram=Uninstall %1
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -38,7 +50,7 @@ Source: "ShadowProxy\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs c
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start-gui.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
-Name: "{autoprograms}\{#MyAppName}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
+Name: "{autoprograms}\{#MyAppName}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start-gui.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
