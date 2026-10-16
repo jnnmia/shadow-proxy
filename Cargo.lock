@@ -1895,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "shadow-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1910,7 +1910,7 @@ dependencies = [
 
 [[package]]
 name = "shadow-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1924,7 +1924,7 @@ dependencies = [
 
 [[package]]
 name = "shadow-gui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -1941,14 +1941,14 @@ dependencies = [
 
 [[package]]
 name = "shadow-hook"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "shadow-injector"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "thiserror 2.0.20",

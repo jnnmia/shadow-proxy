@@ -29,8 +29,8 @@ ShadowProxy 是一款基于 Rust 开发的 Windows 进程级透明代理工具�
 
 | 分发形态 | 文件名 | 说明 |
 |---|---|---|
-| 独立安装包 | `ShadowProxy-Setup-v0.2.0.exe` | 单文件安装程序，一键配置桌面与开始菜单快捷方式，支持系统标准卸载 |
-| 免安装绿色包 | `ShadowProxy-v0.2.0-windows-portable.zip` | 解压即用，直接运行 `start-gui.bat` 即可启动 |
+| 独立安装包 | `ShadowProxy-Setup-v0.2.1.exe` | 单文件安装程序，一键配置桌面与开始菜单快捷方式，支持系统标准卸载 |
+| 免安装绿色包 | `ShadowProxy-v0.2.1-windows-portable.zip` | 解压即用，直接运行 `start-gui.bat` 即可启动 |
 
 ---
 

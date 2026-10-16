@@ -27,6 +27,9 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc, i686-pc-windows-gnu
 
+      - name: Ensure 32-bit Target
+        run: rustup target add i686-pc-windows-gnu
+
       - name: Install Inno Setup
         run: |
           choco install innosetup --no-progress

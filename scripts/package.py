@@ -19,7 +19,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 APP_NAME = "ShadowProxy"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 APP_DESCRIPTION = "Windows 进程级透明代理引擎"
 PUBLISHER = "ShadowProxy Team"
 HOMEPAGE = "https://github.com/jnnmia/shadow-proxy"
@@ -39,7 +39,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $appName = "ShadowProxy"
-$appVersion = "0.2.0"
+$appVersion = "0.2.1"
 $sourceDir = $PSScriptRoot
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\$appName"
 $isZh = ([System.Globalization.CultureInfo]::CurrentUICulture.Name -like "zh*")
@@ -292,7 +292,7 @@ exit
 
 INNO_SETUP_TEMPLATE = r'''; ShadowProxy Inno Setup 脚本
 #define MyAppName "ShadowProxy"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.2.1"
 #define MyAppPublisher "ShadowProxy Team"
 #define MyAppURL "https://github.com/jnnmia/shadow-proxy"
 #define MyAppExeName "bin\shadow-gui.exe"
