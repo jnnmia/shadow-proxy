@@ -22,6 +22,10 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
+AppMutex=Global\ShadowProxy_App_Mutex_2026,ShadowProxy_App_Mutex_2026
+CloseApplications=yes
+RestartApplications=no
+CloseApplicationsFilter=*.exe,*.dll
 
 [Languages]
 Name: "default"; MessagesFile: "compiler:Default.isl"
@@ -39,3 +43,22 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: "
 
 [Run]
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\start-gui.vbs"""; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/f /im shadow-gui.exe /im shadow-cli.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(500);
+  Result := '';
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/f /im shadow-gui.exe /im shadow-cli.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(500);
+  Result := True;
+end;

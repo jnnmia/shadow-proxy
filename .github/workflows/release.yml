@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v0.2.1, leave empty to use current ref)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc, i686-pc-windows-gnu
+
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup --no-progress
+          echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build and Package
+        run: |
+          python scripts/package.py --build
+
+      - name: Verify Artifacts
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path dist
+          if (-not (Test-Path dist/ShadowProxy-Setup-v*.exe)) {
+            throw "Installer .exe was not generated"
+          }
+          if (-not (Test-Path dist/ShadowProxy-v*.zip)) {
+            throw "Portable .zip was not generated"
+          }
+          if (-not (Test-Path dist/SHA256SUMS.txt)) {
+            throw "SHA256SUMS.txt was not generated"
+          }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+          files: |
+            dist/ShadowProxy-Setup-v*.exe
+            dist/ShadowProxy-v*.zip
+            dist/SHA256SUMS.txt
+          generate_release_notes: true

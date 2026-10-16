@@ -1420,6 +1420,16 @@ fn run_app() -> anyhow::Result<()> {
 
     log_step("1. run_app started");
 
+    // 创建系统命名互斥体，供 Inno Setup 安装包检测与单实例识别
+    let mutex_name: Vec<u16> = "Global\\ShadowProxy_App_Mutex_2026\0".encode_utf16().collect();
+    let _app_mutex = unsafe {
+        windows_sys::Win32::System::Threading::CreateMutexW(
+            core::ptr::null(),
+            0,
+            mutex_name.as_ptr(),
+        )
+    };
+
     // 注册全局 Panic 钩子，发生未捕获 Panic 时写入崩溃日志并弹出 Windows 错误对话框，杜绝无感静默闪退
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("ShadowProxy 发生未捕获异常:\n{}", info);
@@ -2244,6 +2254,9 @@ fn run_app() -> anyhow::Result<()> {
                                                             windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
                                                         );
                                                     }
+                                                    let _ = proxy_ev.send_event(UserEvent::Log("[UPDATE] 安装向导已就绪，当前程序将在 1 秒后自动安全退出...".to_string()));
+                                                    std::thread::sleep(std::time::Duration::from_millis(1000));
+                                                    let _ = proxy_ev.send_event(UserEvent::TrayExit);
                                                 }
                                                 Err(code) => {
                                                     let _ = proxy_ev.send_event(UserEvent::Log(format!("[UPDATE] 下载安装包失败 (代码: {:?})，建议前往 GitHub 手动下载", code)));

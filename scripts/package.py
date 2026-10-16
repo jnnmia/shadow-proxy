@@ -270,6 +270,10 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
+AppMutex=Global\ShadowProxy_App_Mutex_2026,ShadowProxy_App_Mutex_2026
+CloseApplications=yes
+RestartApplications=no
+CloseApplicationsFilter=*.exe,*.dll
 
 [Languages]
 Name: "default"; MessagesFile: "compiler:Default.isl"
@@ -287,6 +291,25 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: "
 
 [Run]
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\start-gui.vbs"""; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/f /im shadow-gui.exe /im shadow-cli.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(500);
+  Result := '';
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/f /im shadow-gui.exe /im shadow-cli.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(500);
+  Result := True;
+end;
 '''
 
 def calculate_sha256(filepath):
@@ -354,6 +377,22 @@ def build_binaries(root_dir: Path, bin_dir: Path):
             print(f"  √ 归档构建产物: {src.name} -> {dst.name}")
         else:
             print(f"[警告] 未找到构建产物: {src}", file=sys.stderr)
+
+    # 查找并归档 WebView2Loader.dll
+    wv2_found = False
+    for p in target_dir.glob("**/out/x64/WebView2Loader.dll"):
+        if p.is_file():
+            shutil.copy2(p, bin_dir / "WebView2Loader.dll")
+            print(f"  √ 自动归档 WebView2Loader.dll: {p}")
+            wv2_found = True
+            break
+    if not wv2_found and not (bin_dir / "WebView2Loader.dll").is_file():
+        for p in (root_dir / "target").glob("**/out/x64/WebView2Loader.dll"):
+            if p.is_file():
+                shutil.copy2(p, bin_dir / "WebView2Loader.dll")
+                print(f"  √ 自动归档 WebView2Loader.dll: {p}")
+                wv2_found = True
+                break
 
     print("  √ 多架构构建与产物归档完成！\n")
 
