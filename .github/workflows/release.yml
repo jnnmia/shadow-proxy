@@ -27,22 +27,41 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc, i686-pc-windows-gnu
 
-      - name: Ensure 32-bit Target
-        run: rustup target add i686-pc-windows-gnu
+      - name: Configure Toolchain & Linkers
+        shell: pwsh
+        run: |
+          rustup target add i686-pc-windows-gnu
+          $sysroot = rustc --print sysroot
+          $lldDirs = Get-ChildItem -Path "$sysroot\lib\rustlib" -Recurse -Filter "rust-lld.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.DirectoryName } | Select-Object -Unique
+          foreach ($d in $lldDirs) {
+            Write-Host "Adding linker dir to GITHUB_PATH: $d"
+            echo $d >> $env:GITHUB_PATH
+          }
 
       - name: Install Inno Setup
+        shell: pwsh
         run: |
           choco install innosetup --no-progress
-          echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+          if (Test-Path "C:\Program Files (x86)\Inno Setup 6") {
+            echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+          }
+          if (Test-Path "C:\Program Files\Inno Setup 6") {
+            echo "C:\Program Files\Inno Setup 6" >> $env:GITHUB_PATH
+          }
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Build and Package
-        run: |
-          python scripts/package.py --build
+      - name: Build 64-bit Components
+        run: cargo build --release --workspace
+
+      - name: Build 32-bit Components
+        run: cargo build --release --target i686-pc-windows-gnu -p shadow-hook -p shadow-injector
+
+      - name: Package Release
+        run: python scripts/package.py
 
       - name: Verify Artifacts
         shell: pwsh

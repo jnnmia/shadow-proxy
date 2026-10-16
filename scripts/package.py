@@ -418,38 +418,82 @@ def build_binaries(root_dir: Path, bin_dir: Path):
         print(f"[错误] 32 位编译失败，退出码: {res.returncode}", file=sys.stderr)
         sys.exit(res.returncode)
 
-    # 3. 产物拷贝与名称对齐
-    artifacts_map = [
-        (target_dir / "release" / "shadow-gui.exe", bin_dir / "shadow-gui.exe"),
-        (target_dir / "release" / "shadow-cli.exe", bin_dir / "shadow-cli.exe"),
-        (target_dir / "release" / "shadow_hook.dll", bin_dir / "shadow_hook.dll"),
-        (target_dir / "i686-pc-windows-gnu" / "release" / "shadow_hook.dll", bin_dir / "shadow_hook32.dll"),
-        (target_dir / "i686-pc-windows-gnu" / "release" / "shadow-injector.exe", bin_dir / "shadow-injector32.exe"),
+def collect_binaries(root_dir: Path, bin_dir: Path):
+    import tempfile
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    candidate_targets = []
+    if "CARGO_TARGET_DIR" in os.environ:
+        candidate_targets.append(Path(os.environ["CARGO_TARGET_DIR"]))
+    candidate_targets.append(Path(tempfile.gettempdir()) / "shadow-target")
+    candidate_targets.append(root_dir / "target")
+
+    artifacts_spec = [
+        ("release/shadow-gui.exe", "shadow-gui.exe"),
+        ("release/shadow-cli.exe", "shadow-cli.exe"),
+        ("release/shadow_hook.dll", "shadow_hook.dll"),
+        ("i686-pc-windows-gnu/release/shadow_hook.dll", "shadow_hook32.dll"),
+        ("i686-pc-windows-gnu/release/shadow-injector.exe", "shadow-injector32.exe"),
     ]
 
-    for src, dst in artifacts_map:
-        if src.is_file():
-            shutil.copy2(src, dst)
-            print(f"  √ 归档构建产物: {src.name} -> {dst.name}")
-        else:
-            print(f"[警告] 未找到构建产物: {src}", file=sys.stderr)
-
-    # 查找并归档 WebView2Loader.dll
-    wv2_found = False
-    for p in target_dir.glob("**/out/x64/WebView2Loader.dll"):
-        if p.is_file():
-            shutil.copy2(p, bin_dir / "WebView2Loader.dll")
-            print(f"  √ 自动归档 WebView2Loader.dll: {p}")
-            wv2_found = True
-            break
-    if not wv2_found and not (bin_dir / "WebView2Loader.dll").is_file():
-        for p in (root_dir / "target").glob("**/out/x64/WebView2Loader.dll"):
-            if p.is_file():
-                shutil.copy2(p, bin_dir / "WebView2Loader.dll")
-                print(f"  √ 自动归档 WebView2Loader.dll: {p}")
-                wv2_found = True
+    for rel_src, dst_name in artifacts_spec:
+        dst = bin_dir / dst_name
+        if dst.is_file() and dst.stat().st_size > 0:
+            continue
+        for t in candidate_targets:
+            src = t / rel_src
+            if src.is_file():
+                shutil.copy2(src, dst)
+                print(f"  √ 归档构建产物: {src} -> {dst.name}")
                 break
 
+    # 深度检索 WebView2Loader.dll
+    wv2_dst = bin_dir / "WebView2Loader.dll"
+    if not (wv2_dst.is_file() and wv2_dst.stat().st_size > 0):
+        found = False
+        for t in candidate_targets:
+            if not t.exists():
+                continue
+            for p in t.rglob("WebView2Loader.dll"):
+                if p.is_file():
+                    # 优先选择 x64 架构产物
+                    if "x64" in str(p) or p.stat().st_size > 140000:
+                        shutil.copy2(p, wv2_dst)
+                        print(f"  √ 自动归档 WebView2Loader.dll: {p}")
+                        found = True
+                        break
+            if found:
+                break
+
+
+def build_binaries(root_dir: Path, bin_dir: Path):
+    import tempfile
+    print("\n[步骤 0/5] 开始自动化多架构编译构建 (--build)...")
+    target_dir_str = os.environ.get("CARGO_TARGET_DIR")
+    if not target_dir_str:
+        target_dir_str = str(Path(tempfile.gettempdir()) / "shadow-target")
+        os.environ["CARGO_TARGET_DIR"] = target_dir_str
+    target_dir = Path(target_dir_str)
+    print(f"  √ Cargo 临时构建目录: {target_dir}")
+
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. 编译 64 位全量组件
+    print("  -> 正在编译 64 位核心组件 (x86_64)...")
+    cmd_x64 = ["cargo", "build", "--release", "--workspace"]
+    res = subprocess.run(cmd_x64, cwd=root_dir)
+    if res.returncode != 0:
+        print(f"[错误] 64 位编译失败，退出码: {res.returncode}", file=sys.stderr)
+        sys.exit(res.returncode)
+
+    # 2. 编译 32 位兼容组件 (shadow-hook, shadow-injector)
+    print("  -> 正在编译 32 位兼容组件 (i686-pc-windows-gnu)...")
+    cmd_x86 = ["cargo", "build", "--release", "--target", "i686-pc-windows-gnu", "-p", "shadow-hook", "-p", "shadow-injector"]
+    res = subprocess.run(cmd_x86, cwd=root_dir)
+    if res.returncode != 0:
+        print(f"[错误] 32 位编译失败，退出码: {res.returncode}", file=sys.stderr)
+        sys.exit(res.returncode)
+
+    collect_binaries(root_dir, bin_dir)
     print("  √ 多架构构建与产物归档完成！\n")
 
 
@@ -465,6 +509,8 @@ def main():
 
     if "--build" in sys.argv:
         build_binaries(root_dir, bin_dir)
+    else:
+        collect_binaries(root_dir, bin_dir)
 
     # 1. 检查必备二进制产物
     print("\n[步骤 1/5] 校验构建产物完整性...")
