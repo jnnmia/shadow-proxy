@@ -19,7 +19,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 APP_NAME = "ShadowProxy"
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.2.0"
 APP_DESCRIPTION = "Windows 进程级透明代理引擎"
 PUBLISHER = "ShadowProxy Team"
 HOMEPAGE = "https://github.com/jnnmia/shadow-proxy"
@@ -39,7 +39,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $appName = "ShadowProxy"
-$appVersion = "0.1.2"
+$appVersion = "0.2.0"
 $sourceDir = $PSScriptRoot
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\$appName"
 
@@ -248,7 +248,7 @@ exit
 
 INNO_SETUP_TEMPLATE = r'''; ShadowProxy Inno Setup 脚本
 #define MyAppName "ShadowProxy"
-#define MyAppVersion "0.1.2"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "ShadowProxy Team"
 #define MyAppURL "https://github.com/jnnmia/shadow-proxy"
 #define MyAppExeName "bin\shadow-gui.exe"
@@ -311,6 +311,53 @@ def find_iscc():
 
 
 
+def build_binaries(root_dir: Path, bin_dir: Path):
+    import tempfile
+    print("\n[步骤 0/5] 开始自动化多架构编译构建 (--build)...")
+    target_dir_str = os.environ.get("CARGO_TARGET_DIR")
+    if not target_dir_str:
+        target_dir_str = str(Path(tempfile.gettempdir()) / "shadow-target")
+        os.environ["CARGO_TARGET_DIR"] = target_dir_str
+    target_dir = Path(target_dir_str)
+    print(f"  √ Cargo 临时构建目录: {target_dir}")
+
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. 编译 64 位全量组件
+    print("  -> 正在编译 64 位核心组件 (x86_64)...")
+    cmd_x64 = ["cargo", "build", "--release", "--workspace"]
+    res = subprocess.run(cmd_x64, cwd=root_dir)
+    if res.returncode != 0:
+        print(f"[错误] 64 位编译失败，退出码: {res.returncode}", file=sys.stderr)
+        sys.exit(res.returncode)
+
+    # 2. 编译 32 位兼容组件 (shadow-hook, shadow-injector)
+    print("  -> 正在编译 32 位兼容组件 (i686-pc-windows-gnu)...")
+    cmd_x86 = ["cargo", "build", "--release", "--target", "i686-pc-windows-gnu", "-p", "shadow-hook", "-p", "shadow-injector"]
+    res = subprocess.run(cmd_x86, cwd=root_dir)
+    if res.returncode != 0:
+        print(f"[错误] 32 位编译失败，退出码: {res.returncode}", file=sys.stderr)
+        sys.exit(res.returncode)
+
+    # 3. 产物拷贝与名称对齐
+    artifacts_map = [
+        (target_dir / "release" / "shadow-gui.exe", bin_dir / "shadow-gui.exe"),
+        (target_dir / "release" / "shadow-cli.exe", bin_dir / "shadow-cli.exe"),
+        (target_dir / "release" / "shadow_hook.dll", bin_dir / "shadow_hook.dll"),
+        (target_dir / "i686-pc-windows-gnu" / "release" / "shadow_hook.dll", bin_dir / "shadow_hook32.dll"),
+        (target_dir / "i686-pc-windows-gnu" / "release" / "shadow-injector.exe", bin_dir / "shadow-injector32.exe"),
+    ]
+
+    for src, dst in artifacts_map:
+        if src.is_file():
+            shutil.copy2(src, dst)
+            print(f"  √ 归档构建产物: {src.name} -> {dst.name}")
+        else:
+            print(f"[警告] 未找到构建产物: {src}", file=sys.stderr)
+
+    print("  √ 多架构构建与产物归档完成！\n")
+
+
 def main():
     root_dir = Path(__file__).resolve().parent.parent
     bin_dir = root_dir / "bin"
@@ -320,6 +367,9 @@ def main():
 
     print(f"=== {APP_NAME} v{APP_VERSION} 打包发布流程 ===")
     print(f"工作区根目录: {root_dir}")
+
+    if "--build" in sys.argv:
+        build_binaries(root_dir, bin_dir)
 
     # 1. 检查必备二进制产物
     print("\n[步骤 1/5] 校验构建产物完整性...")

@@ -17,7 +17,9 @@ ShadowProxy 是一款基于 Rust 开发的 Windows 进程级透明代理工具�
 | 严格 DNS 防泄漏 | RFC 2544 Fake-IP 内存映射 + 本地 UDP/53 拦截 | 目标进程无明文 DNS 解析泄漏，强制远端 SOCKS5 或 DoT 解析 |
 | QUIC 协议阻断 | 拦截目标程序 UDP/443 并返回连接拒绝 | 促使浏览器与现代网络应用平稳降级至 TCP 代理隧道 |
 | 双架构自动识别 | PE 头 Machine 字段识别 x86 / x64 | 自动探测目标程序架构并调度对应 32 位或 64 位注入模块 |
-| 上游探活与三态感知 | 前置 SOCKS5 握手 + 后台心跳巡检 | 杜绝上游未启动时的虚假在线假象，支持自愈恢复与断线降级 |
+| 上游探活与三态感知 | 前置 SOCKS5 / HTTP CONNECT 握手 + 心跳探活 | 杜绝上游未启动时的虚假在线假象，支持休眠唤醒自愈恢复与断线降级 |
+| 进程识别分流引擎 | 中继帧协议 v2 (PID 与进程名标识) | 支持域名、IP-CIDR、端口范围及按发起进程名精细化分流 |
+| 运行时附加与原生托盘 | Win32 ToolHelp32 快照 + Shell_NotifyIconW | 支持向运行中进程动态附加注入，最小化至系统托盘常驻后台 |
 
 ---
 
@@ -27,8 +29,8 @@ ShadowProxy 是一款基于 Rust 开发的 Windows 进程级透明代理工具�
 
 | 分发形态 | 文件名 | 说明 |
 |---|---|---|
-| 独立安装包 | `ShadowProxy-Setup-v0.1.2.exe` | 单文件安装程序，一键配置桌面与开始菜单快捷方式，支持系统标准卸载 |
-| 免安装绿色包 | `ShadowProxy-v0.1.2-windows-portable.zip` | 解压即用，直接运行 `start-gui.bat` 即可启动 |
+| 独立安装包 | `ShadowProxy-Setup-v0.2.0.exe` | 单文件安装程序，一键配置桌面与开始菜单快捷方式，支持系统标准卸载 |
+| 免安装绿色包 | `ShadowProxy-v0.2.0-windows-portable.zip` | 解压即用，直接运行 `start-gui.bat` 即可启动 |
 
 ---
 

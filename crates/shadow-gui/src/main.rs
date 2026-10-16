@@ -36,6 +36,9 @@ enum UserEvent {
     SystemSuspend,
     SystemResume,
     Log(String),
+    TrayShow,
+    TrayToggleRelay,
+    TrayExit,
 }
 
 #[derive(Deserialize, Debug)]
@@ -56,6 +59,10 @@ enum IpcCommand {
         proxy: Option<String>,
         strict_dns: Option<bool>,
     },
+    #[serde(rename = "attach_process")]
+    AttachProcess { pid: u32 },
+    #[serde(rename = "list_system_processes")]
+    ListSystemProcesses,
     #[serde(rename = "kill_process")]
     KillProcess { pid: u32 },
     #[serde(rename = "add_preset")]
@@ -63,6 +70,13 @@ enum IpcCommand {
         name: Option<String>,
         target: String,
         args: Option<String>,
+    },
+    #[serde(rename = "update_preset")]
+    UpdatePreset {
+        index: usize,
+        name: String,
+        target: String,
+        args: String,
     },
     #[serde(rename = "delete_preset")]
     DeletePreset { index: usize },
@@ -73,6 +87,12 @@ enum IpcCommand {
         pattern_val: String,
         action: String,
     },
+    #[serde(rename = "move_rule")]
+    MoveRule { from: usize, to: usize },
+    #[serde(rename = "import_rules")]
+    ImportRules { json: String },
+    #[serde(rename = "clear_rules")]
+    ClearRules,
     #[serde(rename = "delete_rule")]
     DeleteRule { id: String },
     #[serde(rename = "toggle_rule")]
@@ -438,7 +458,15 @@ impl AppState {
         strict_dns: bool,
     ) -> Result<SocketAddr, String> {
         // 1. 前置参数校验，严禁在校验前破坏性关闭已有运行中的中继
-        let upstream_proxy: SocketAddr = proxy_str
+        let (upstream_is_http, clean_proxy_str) = if let Some(stripped) = proxy_str.strip_prefix("http://") {
+            (true, stripped)
+        } else if let Some(stripped) = proxy_str.strip_prefix("socks5://") {
+            (false, stripped)
+        } else {
+            (false, proxy_str)
+        };
+
+        let upstream_proxy: SocketAddr = clean_proxy_str
             .parse()
             .map_err(|e| format!("上游代理地址无效: {}", e))?;
 
@@ -455,6 +483,7 @@ impl AppState {
         let config = RelayConfig {
             listen_addr,
             upstream_proxy,
+            upstream_is_http,
             proxy_auth: None,
             strict_dns,
             dns_over_tcp_server: Some("223.5.5.5:53".parse().unwrap()),
@@ -489,8 +518,9 @@ impl AppState {
 
         // 4. 前置同步快速探活 (800ms) 决定启动初始健康状态，彻底杜绝虚假 ONLINE
         let initial_probe = self.rt.block_on(async {
-            shadow_core::check_upstream_health(
+            shadow_core::check_upstream_health_auto(
                 upstream_proxy,
+                upstream_is_http,
                 None,
                 std::time::Duration::from_millis(800),
             )
@@ -509,6 +539,7 @@ impl AppState {
 
         // 5. 启动后台健康心跳伴生协程 (每 2.5s 探活一次，并支持系统唤醒即时探活自愈)
         let probe_proxy = upstream_proxy;
+        let probe_is_http = upstream_is_http;
         self.rt.spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(2500));
             interval.tick().await;
@@ -516,8 +547,9 @@ impl AppState {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let res = match shadow_core::check_upstream_health(
+                        let res = match shadow_core::check_upstream_health_auto(
                             probe_proxy,
+                            probe_is_http,
                             None,
                             std::time::Duration::from_millis(800),
                         )
@@ -534,8 +566,9 @@ impl AppState {
                     _ = resume_rx.notified() => {
                         // 系统休眠唤醒后，连续快速探测 3 次（每次间隔 1 秒），以便在上游代理就绪的第一时间自愈恢复
                         for _ in 0..3 {
-                            let res = match shadow_core::check_upstream_health(
+                            let res = match shadow_core::check_upstream_health_auto(
                                 probe_proxy,
+                                probe_is_http,
                                 None,
                                 std::time::Duration::from_millis(800),
                             )
@@ -835,6 +868,76 @@ impl AppState {
         }
     }
 
+    fn attach_process(&mut self, pid: u32) -> Result<(), String> {
+        if self.processes.iter().any(|p| p.pid == pid && p.running) {
+            return Err(format!("进程 PID {} 已在托管列表中", pid));
+        }
+
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, IsWow64Process, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE
+        };
+        let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if h.is_null() {
+            return Err(format!("无法打开目标进程 PID {} (可能权限不足或进程已退出)", pid));
+        }
+
+        let mut is_wow64: windows_sys::Win32::Foundation::BOOL = 0;
+        let ok = unsafe { IsWow64Process(h, &mut is_wow64) };
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(h) };
+        if ok == 0 {
+            return Err(format!("查询进程 PID {} 架构失败", pid));
+        }
+
+        let arch = if is_wow64 != 0 {
+            Architecture::X86
+        } else {
+            Architecture::X64
+        };
+
+        let dll_path = resolve_hook_dll(arch)
+            .map_err(|e| format!("未找到对应架构 Hook 动态库: {}", e))?;
+
+        // 注入目标进程
+        inject_existing_pid(pid, &dll_path)
+            .map_err(|e| format!("向进程 PID {} 附加注入失败: {}", pid, e))?;
+
+        // 获取进程名
+        let proc_name = list_system_processes()
+            .into_iter()
+            .find(|p| p.pid == pid)
+            .map(|p| p.name)
+            .unwrap_or_else(|| format!("PID:{}", pid));
+
+        let handle = unsafe {
+            OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, 0, pid)
+        };
+
+        self.processes.push(TrackedProcess {
+            pid,
+            parent_pid: None,
+            name: proc_name.clone(),
+            path: "".to_string(),
+            arch: format!("{:?}", arch),
+            handle,
+            running: true,
+            exit_code: 0,
+            icon: None,
+        });
+
+        self.last_log = Some(format!("[INJECT] 成功附加到运行中进程 [{}] (PID: {})", proc_name, pid));
+        Ok(())
+    }
+
+    fn update_preset(&mut self, index: usize, name: String, target: String, args: String) {
+        if let Some(p) = self.presets.get_mut(index) {
+            p.name = name;
+            p.target = target;
+            p.args = args;
+            self.save_presets();
+            self.last_log = Some("[PRESET] 常用快捷预设已更新".to_string());
+        }
+    }
+
     fn update_process_statuses(&mut self) {
         // 1. 检查已有跟踪进程的存活状态
         for p in &mut self.processes {
@@ -1034,6 +1137,53 @@ fn scan_child_processes(root_pids: &[u32]) -> Vec<(u32, u32, String)> {
     children
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SystemProcessItem {
+    pub pid: u32,
+    pub name: String,
+}
+
+fn list_system_processes() -> Vec<SystemProcessItem> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let mut result = Vec::new();
+    let my_pid = std::process::id();
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return result;
+        }
+
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+        if Process32FirstW(snapshot, &mut entry) != 0 {
+            loop {
+                let pid = entry.th32ProcessID;
+                if pid > 4 && pid != my_pid {
+                    let null_pos = entry
+                        .szExeFile
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entry.szExeFile.len());
+                    let name = String::from_utf16_lossy(&entry.szExeFile[..null_pos]);
+                    result.push(SystemProcessItem { pid, name });
+                }
+                if Process32NextW(snapshot, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snapshot);
+    }
+    result.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    result
+}
+
 fn resolve_hook_dll(arch: Architecture) -> anyhow::Result<PathBuf> {
     let dll_names = match arch {
         Architecture::X64 => ["shadow_hook.dll", "ghost_hook.dll"],
@@ -1192,7 +1342,8 @@ fn run_app() -> anyhow::Result<()> {
 
     let hwnd = window.hwnd() as windows_sys::Win32::Foundation::HWND;
 
-    // 设置窗口标题栏与任务栏大/小专属图标
+    // 设置窗口标题栏与任务栏大/小专属图标，并初始化系统托盘图标
+    let mut nid: windows_sys::Win32::UI::Shell::NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
     unsafe {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTSIZE,
@@ -1204,6 +1355,20 @@ fn run_app() -> anyhow::Result<()> {
         if !h_icon.is_null() {
             SendMessageW(hwnd, WM_SETICON, ICON_BIG as _, h_icon as _);
             SendMessageW(hwnd, WM_SETICON, ICON_SMALL as _, h_icon as _);
+
+            use windows_sys::Win32::UI::Shell::{Shell_NotifyIconW, NIM_ADD, NIF_ICON, NIF_MESSAGE, NIF_TIP};
+            const WM_USER: u32 = 0x0400;
+            const WM_TRAYICON: u32 = WM_USER + 100;
+            nid.cbSize = std::mem::size_of::<windows_sys::Win32::UI::Shell::NOTIFYICONDATAW>() as u32;
+            nid.hWnd = hwnd;
+            nid.uID = 1001;
+            nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+            nid.uCallbackMessage = WM_TRAYICON;
+            nid.hIcon = h_icon;
+            let tip: Vec<u16> = "ShadowProxy - 进程级透明代理\0".encode_utf16().collect();
+            let c_len = tip.len().min(nid.szTip.len());
+            nid.szTip[..c_len].copy_from_slice(&tip[..c_len]);
+            Shell_NotifyIconW(NIM_ADD, &nid);
         }
     }
 
@@ -1211,7 +1376,7 @@ fn run_app() -> anyhow::Result<()> {
     let proxy_ipc = proxy.clone();
     let proxy_drop = proxy.clone();
 
-    // 监听 Windows 系统级电源广播事件 (WM_POWERBROADCAST)，精准捕获休眠挂起与唤醒恢复
+    // 监听系统广播 (电源状态 + 系统托盘消息)
     unsafe {
         #[link(name = "comctl32")]
         extern "system" {
@@ -1250,6 +1415,12 @@ fn run_app() -> anyhow::Result<()> {
             const PBT_APMRESUMEAUTOMATIC: usize = 0x0012;
             const PBT_APMRESUMESUSPEND: usize = 0x0007;
 
+            const WM_USER: u32 = 0x0400;
+            const WM_TRAYICON: u32 = WM_USER + 100;
+            const WM_RBUTTONUP: usize = 0x0205;
+            const WM_LBUTTONDBLCLK: usize = 0x0203;
+            const WM_LBUTTONUP: usize = 0x0202;
+
             if msg == WM_POWERBROADCAST {
                 let proxy_ref = &*(ref_data as *const tao::event_loop::EventLoopProxy<UserEvent>);
                 if wparam == PBT_APMSUSPEND {
@@ -1257,6 +1428,38 @@ fn run_app() -> anyhow::Result<()> {
                 } else if wparam == PBT_APMRESUMEAUTOMATIC || wparam == PBT_APMRESUMESUSPEND {
                     let _ = proxy_ref.send_event(UserEvent::SystemResume);
                 }
+            } else if msg == WM_TRAYICON {
+                let proxy_ref = &*(ref_data as *const tao::event_loop::EventLoopProxy<UserEvent>);
+                let evt = lparam as usize;
+                if evt == WM_LBUTTONDBLCLK || evt == WM_LBUTTONUP {
+                    let _ = proxy_ref.send_event(UserEvent::TrayShow);
+                } else if evt == WM_RBUTTONUP {
+                    use windows_sys::Win32::UI::WindowsAndMessaging::{
+                        CreatePopupMenu, AppendMenuW, TrackPopupMenu, DestroyMenu,
+                        GetCursorPos, SetForegroundWindow,
+                        MF_STRING, TPM_RIGHTBUTTON, TPM_NONOTIFY, TPM_RETURNCMD,
+                    };
+                    let mut pt: windows_sys::Win32::Foundation::POINT = std::mem::zeroed();
+                    GetCursorPos(&mut pt);
+                    SetForegroundWindow(hwnd);
+                    let hmenu = CreatePopupMenu();
+                    let m_show: Vec<u16> = "打开主界面\0".encode_utf16().collect();
+                    let m_toggle: Vec<u16> = "启动/停止中继\0".encode_utf16().collect();
+                    let m_exit: Vec<u16> = "退出程序\0".encode_utf16().collect();
+                    AppendMenuW(hmenu, MF_STRING, 1, m_show.as_ptr());
+                    AppendMenuW(hmenu, MF_STRING, 2, m_toggle.as_ptr());
+                    AppendMenuW(hmenu, MF_STRING, 3, m_exit.as_ptr());
+                    let cmd = TrackPopupMenu(hmenu, TPM_RIGHTBUTTON | TPM_NONOTIFY | TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, std::ptr::null());
+                    DestroyMenu(hmenu);
+                    if cmd == 1 {
+                        let _ = proxy_ref.send_event(UserEvent::TrayShow);
+                    } else if cmd == 2 {
+                        let _ = proxy_ref.send_event(UserEvent::TrayToggleRelay);
+                    } else if cmd == 3 {
+                        let _ = proxy_ref.send_event(UserEvent::TrayExit);
+                    }
+                }
+                return 0;
             }
 
             DefSubclassProc(hwnd, msg, wparam, lparam)
@@ -1570,6 +1773,7 @@ fn run_app() -> anyhow::Result<()> {
                                         let end = parts.get(1).and_then(|p| p.trim().parse::<u16>().ok()).unwrap_or(start);
                                         RulePattern::PortRange { start, end }
                                     }
+                                    "process_name" | "process" => RulePattern::ProcessName(pattern_val),
                                     _ => RulePattern::Final,
                                 };
                                 let rule_id = format!("rule-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
@@ -1585,6 +1789,99 @@ fn run_app() -> anyhow::Result<()> {
                                 }
                                 state.save_rules();
                                 state.last_log = Some(format!("[RULE] 已新增分流规则: {}", name));
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::MoveRule { from, to } => {
+                                {
+                                    let mut router = state.router.write().unwrap();
+                                    router.move_rule(from, to);
+                                }
+                                state.save_rules();
+                                state.last_log = Some("[RULE] 规则优先级已调整".to_string());
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::ImportRules { json } => {
+                                let mut imported_count = 0;
+                                if let Ok(new_router) = Router::from_json(&json) {
+                                    let mut router = state.router.write().unwrap();
+                                    for r in new_router.rules {
+                                        if !matches!(r.pattern, RulePattern::Final) {
+                                            router.add_rule(r);
+                                            imported_count += 1;
+                                        }
+                                    }
+                                } else if let Ok(new_rules) = serde_json::from_str::<Vec<RuleItem>>(&json) {
+                                    let mut router = state.router.write().unwrap();
+                                    for r in new_rules {
+                                        if !matches!(r.pattern, RulePattern::Final) {
+                                            router.add_rule(r);
+                                            imported_count += 1;
+                                        }
+                                    }
+                                }
+                                state.save_rules();
+                                state.last_log = Some(format!("[RULE] 成功导入 {} 条规则", imported_count));
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::ClearRules => {
+                                {
+                                    let mut router = state.router.write().unwrap();
+                                    router.clear_custom_rules();
+                                }
+                                state.save_rules();
+                                state.last_log = Some("[RULE] 已清空自定义分流规则".to_string());
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::AttachProcess { pid } => {
+                                match state.attach_process(pid) {
+                                    Ok(()) => {}
+                                    Err(e) => {
+                                        state.last_log = Some(format!("[INJECT] 附加注入失败: {}", e));
+                                    }
+                                }
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::ListSystemProcesses => {
+                                let procs = list_system_processes();
+                                if let Ok(json) = serde_json::to_string(&procs) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.onSystemProcessesLoaded({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::UpdatePreset { index, name, target, args } => {
+                                state.update_preset(index, name, target, args);
                                 let full = state.get_full_state();
                                 if let Ok(json) = serde_json::to_string(&full) {
                                     let _ = webview.evaluate_script(&format!(
@@ -1787,22 +2084,66 @@ fn run_app() -> anyhow::Result<()> {
                         }
                     }
                 }
+                UserEvent::TrayShow => {
+                    window.set_visible(true);
+                    window.set_focus();
+                }
+                UserEvent::TrayToggleRelay => {
+                    if state.relay.is_some() {
+                        state.stop_relay();
+                        state.last_log = Some("[RELAY] 已通过托盘菜单停止中继服务".to_string());
+                    } else {
+                        let p = state.upstream_proxy.clone();
+                        let d = state.strict_dns;
+                        if let Err(e) = state.start_relay(&p, d) {
+                            state.last_log = Some(format!("[RELAY] 托盘启动中继失败: {}", e));
+                        } else {
+                            state.last_log = Some("[RELAY] 已通过托盘菜单启动中继服务".to_string());
+                        }
+                    }
+                    let full = state.get_full_state();
+                    if let Ok(json) = serde_json::to_string(&full) {
+                        let _ = webview.evaluate_script(&format!(
+                            "window.updateState({});",
+                            json
+                        ));
+                    }
+                }
+                UserEvent::TrayExit => {
+                    if !nid.hWnd.is_null() {
+                        unsafe {
+                            windows_sys::Win32::UI::Shell::Shell_NotifyIconW(
+                                windows_sys::Win32::UI::Shell::NIM_DELETE,
+                                &nid,
+                            );
+                        }
+                    }
+                    state.stop_relay();
+                    for p in &mut state.processes {
+                        if !p.handle.is_null() {
+                            unsafe {
+                                windows_sys::Win32::Foundation::CloseHandle(p.handle);
+                            }
+                            p.handle = core::ptr::null_mut();
+                        }
+                    }
+                    *control_flow = ControlFlow::Exit;
+                    std::process::exit(0);
+                }
             },
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
-                state.stop_relay();
-                for p in &mut state.processes {
-                    if !p.handle.is_null() {
-                        unsafe {
-                            windows_sys::Win32::Foundation::CloseHandle(p.handle);
-                        }
-                        p.handle = core::ptr::null_mut();
-                    }
+                window.set_visible(false);
+                state.last_log = Some("[SYS] 窗口已最小化至系统托盘常驻运行".to_string());
+                let full = state.get_full_state();
+                if let Ok(json) = serde_json::to_string(&full) {
+                    let _ = webview.evaluate_script(&format!(
+                        "window.updateState({});",
+                        json
+                    ));
                 }
-                *control_flow = ControlFlow::Exit;
-                std::process::exit(0);
             }
             _ => {}
         }
@@ -1864,6 +2205,37 @@ mod tests {
         if let IpcCommand::SetProxyConfig { proxy, strict_dns } = cmd {
             assert_eq!(proxy, "127.0.0.1:7890");
             assert!(!strict_dns);
+        } else {
+            panic!("反序列化类型不匹配");
+        }
+
+        // 6. attach_process
+        let cmd: IpcCommand = serde_json::from_str(r#"{"cmd":"attach_process","pid":9876}"#).unwrap();
+        if let IpcCommand::AttachProcess { pid } = cmd {
+            assert_eq!(pid, 9876);
+        } else {
+            panic!("反序列化类型不匹配");
+        }
+
+        // 7. move_rule
+        let cmd: IpcCommand = serde_json::from_str(r#"{"cmd":"move_rule","from":1,"to":0}"#).unwrap();
+        if let IpcCommand::MoveRule { from, to } = cmd {
+            assert_eq!(from, 1);
+            assert_eq!(to, 0);
+        } else {
+            panic!("反序列化类型不匹配");
+        }
+
+        // 8. update_preset
+        let cmd: IpcCommand = serde_json::from_str(
+            r#"{"cmd":"update_preset","index":0,"name":"Git 终端","target":"git.exe","args":"status"}"#,
+        )
+        .unwrap();
+        if let IpcCommand::UpdatePreset { index, name, target, args } = cmd {
+            assert_eq!(index, 0);
+            assert_eq!(name, "Git 终端");
+            assert_eq!(target, "git.exe");
+            assert_eq!(args, "status");
         } else {
             panic!("反序列化类型不匹配");
         }

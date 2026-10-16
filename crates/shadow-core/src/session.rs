@@ -48,12 +48,18 @@ pub struct SessionRecord {
     pub upload_bytes: u64,
     pub download_bytes: u64,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub pid: Option<u32>,
+    #[serde(default)]
+    pub process_name: Option<String>,
 }
 
 /// 活跃会话上下文
 struct ActiveContext {
     created_at: Instant,
     record: SessionRecord,
+    upload_bytes: std::sync::Arc<AtomicU64>,
+    download_bytes: std::sync::Arc<AtomicU64>,
 }
 
 /// 速率快照
@@ -109,6 +115,20 @@ impl SessionTracker {
         action: RouteAction,
         is_blocked: bool,
     ) -> u64 {
+        let (id, _, _) = self.start_session_full(target, rule_name, action, is_blocked, None, None);
+        id
+    }
+
+    /// 开启包含发起进程元数据的新会话，返回会话 ID 及用于实时无锁更新的上下行原子计数句柄
+    pub fn start_session_full(
+        &self,
+        target: &str,
+        rule_name: &str,
+        action: RouteAction,
+        is_blocked: bool,
+        pid: Option<u32>,
+        process_name: Option<String>,
+    ) -> (u64, std::sync::Arc<AtomicU64>, std::sync::Arc<AtomicU64>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let now_sec = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -124,6 +144,9 @@ impl SessionTracker {
             SessionStatus::Active
         };
 
+        let up_counter = std::sync::Arc::new(AtomicU64::new(0));
+        let down_counter = std::sync::Arc::new(AtomicU64::new(0));
+
         let record = SessionRecord {
             id,
             start_time: now_sec,
@@ -135,6 +158,8 @@ impl SessionTracker {
             upload_bytes: 0,
             download_bytes: 0,
             duration_ms: 0,
+            pid,
+            process_name,
         };
 
         if is_blocked {
@@ -151,11 +176,13 @@ impl SessionTracker {
                 ActiveContext {
                     created_at: Instant::now(),
                     record,
+                    upload_bytes: std::sync::Arc::clone(&up_counter),
+                    download_bytes: std::sync::Arc::clone(&down_counter),
                 },
             );
         }
 
-        id
+        (id, up_counter, down_counter)
     }
 
     /// 更新会话上传与下载流量
@@ -163,10 +190,10 @@ impl SessionTracker {
         self.total_up.fetch_add(up, Ordering::Relaxed);
         self.total_down.fetch_add(down, Ordering::Relaxed);
 
-        let mut act = self.active.write().unwrap();
-        if let Some(ctx) = act.get_mut(&id) {
-            ctx.record.upload_bytes += up;
-            ctx.record.download_bytes += down;
+        let act = self.active.read().unwrap();
+        if let Some(ctx) = act.get(&id) {
+            ctx.upload_bytes.fetch_add(up, Ordering::Relaxed);
+            ctx.download_bytes.fetch_add(down, Ordering::Relaxed);
         }
     }
 
@@ -181,8 +208,10 @@ impl SessionTracker {
         };
 
         if let Some(mut ctx) = removed {
-            ctx.record.upload_bytes += up;
-            ctx.record.download_bytes += down;
+            let atomic_up = ctx.upload_bytes.load(Ordering::Relaxed);
+            let atomic_down = ctx.download_bytes.load(Ordering::Relaxed);
+            ctx.record.upload_bytes = up.max(atomic_up);
+            ctx.record.download_bytes = down.max(atomic_down);
             ctx.record.status = status;
             ctx.record.duration_ms = ctx.created_at.elapsed().as_millis() as u64;
 
@@ -198,11 +227,13 @@ impl SessionTracker {
     pub fn list_sessions(&self, limit: usize) -> Vec<SessionRecord> {
         let mut result = Vec::new();
 
-        // 1. 活跃会话 (动态更新耗时)
+        // 1. 活跃会话 (动态更新耗时与实时上下行流量)
         {
             let act = self.active.read().unwrap();
             for ctx in act.values() {
                 let mut rec = ctx.record.clone();
+                rec.upload_bytes = ctx.upload_bytes.load(Ordering::Relaxed);
+                rec.download_bytes = ctx.download_bytes.load(Ordering::Relaxed);
                 rec.duration_ms = ctx.created_at.elapsed().as_millis() as u64;
                 result.push(rec);
             }

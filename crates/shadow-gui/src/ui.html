@@ -589,6 +589,42 @@
       border-color: var(--red-accent);
     }
 
+    .btn-primary {
+      background: var(--cyan-neon);
+      color: #080b10;
+      padding: 7px 14px;
+      font-weight: 600;
+    }
+
+    .btn-primary:hover {
+      background: #4ae6db;
+    }
+
+    .btn-icon-tiny {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+      padding: 2px 6px;
+      font-size: 10px;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-icon-tiny:hover:not(:disabled) {
+      background: var(--bg-surface-elevated);
+      color: var(--cyan-neon);
+      border-color: rgba(57, 197, 187, 0.4);
+    }
+
+    .btn-icon-tiny:disabled {
+      cursor: not-allowed;
+      opacity: 0.3;
+    }
+
     /* 常用快捷预设磁贴卡片 */
     .preset-grid {
       display: grid;
@@ -1223,7 +1259,7 @@
         </svg>
         <div class="brand-text">
           <span class="brand-title">SHADOW PROXY</span>
-          <span class="badge-tag">RUST CORE V0.1</span>
+          <span class="badge-tag">RUST CORE V0.2</span>
         </div>
       </div>
 
@@ -1313,7 +1349,7 @@
 
         <div class="sidebar-version-bar">
           <div class="version-meta">
-            <span class="version-tag" id="sidebarVersionTag">v0.1.2</span>
+            <span class="version-tag" id="sidebarVersionTag">v0.2.0</span>
             <span id="updateBadgeDot" class="update-badge-dot" style="display: none;" title="发现新版本"></span>
           </div>
           <button id="btnCheckUpdate" class="btn-check-update" onclick="checkUpdate(false)" title="检查 GitHub 最新发布版本">
@@ -1416,8 +1452,14 @@
             <h1 class="view-title">进程看板与子进程树</h1>
             <p class="view-desc">全量感知主进程及其派生子进程（如 language_server、NetworkService 等）的运行生命周期</p>
           </div>
-          <div class="nav-badge" id="procSummaryBadge" style="padding: 4px 10px; font-size: 11px;">
-            0 个活动进程
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button type="button" class="btn-secondary" onclick="openAttachModal()" style="padding: 4px 10px; font-size: 11px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              <span>附加运行中进程</span>
+            </button>
+            <div class="nav-badge" id="procSummaryBadge" style="padding: 4px 10px; font-size: 11px;">
+              0 个活动进程
+            </div>
           </div>
         </div>
 
@@ -1450,13 +1492,15 @@
             <h1 class="view-title">实时连接会话监控</h1>
             <p class="view-desc">被注入进程发起的全部网络连接遥测、规则决策判定与流量统计</p>
           </div>
-          <div style="display: flex; gap: 8px; align-items: center;">
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="connSearchInput" placeholder="实时过滤目标/规则/进程..." style="height: 28px; width: 175px; font-size: 11.5px; padding: 2px 8px;" oninput="onConnSearchInput()" />
             <div class="filter-group">
               <button class="btn-filter active" id="filterAll" onclick="setSessionFilter('all')">全部 (<span id="countConnAll">0</span>)</button>
               <button class="btn-filter" id="filterProxy" onclick="setSessionFilter('proxy')">代理 (<span id="countConnProxy">0</span>)</button>
               <button class="btn-filter" id="filterDirect" onclick="setSessionFilter('direct')">直连 (<span id="countConnDirect">0</span>)</button>
               <button class="btn-filter" id="filterBlock" onclick="setSessionFilter('block')">阻断 (<span id="countConnBlock">0</span>)</button>
             </div>
+            <button type="button" class="btn-secondary" onclick="exportSessionsCsv()" style="padding: 4px 10px; font-size: 11px;">导出 CSV</button>
             <button type="button" class="btn-secondary" onclick="clearSessions()" style="padding: 4px 10px; font-size: 11px;">清空历史</button>
           </div>
         </div>
@@ -1466,18 +1510,19 @@
             <thead>
               <tr>
                 <th style="width: 75px;">时间</th>
+                <th style="width: 120px;">发起进程</th>
                 <th>目标地址</th>
                 <th>命中规则</th>
-                <th style="width: 85px;">分流决策</th>
-                <th style="width: 85px;">传输状态</th>
-                <th style="width: 80px;">上传</th>
-                <th style="width: 80px;">下载</th>
-                <th style="width: 75px; text-align: right;">耗时</th>
+                <th style="width: 80px;">分流决策</th>
+                <th style="width: 80px;">传输状态</th>
+                <th style="width: 75px;">上传</th>
+                <th style="width: 75px;">下载</th>
+                <th style="width: 65px; text-align: right;">耗时</th>
               </tr>
             </thead>
             <tbody id="connTableBody">
               <tr>
-                <td colspan="8" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+                <td colspan="9" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
                   暂无捕获连接。启动透明代理并运行目标程序后在此实时滚屏。
                 </td>
               </tr>
@@ -1493,10 +1538,15 @@
             <h1 class="view-title">多条件分流规则引擎</h1>
             <p class="view-desc">支持基于域名后缀/关键词/全等、IPv4-CIDR 及端口范围自定义分流策略</p>
           </div>
-          <div style="display: flex; gap: 6px;">
+          <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
             <button type="button" class="btn-secondary" onclick="setPreset('smart')" style="padding: 4px 9px; font-size: 11px;">智能分流</button>
             <button type="button" class="btn-secondary" onclick="setPreset('global')" style="padding: 4px 9px; font-size: 11px;">全局代理</button>
             <button type="button" class="btn-secondary" onclick="setPreset('direct')" style="padding: 4px 9px; font-size: 11px;">全部直连</button>
+            <span style="color: var(--border-subtle); margin: 0 2px;">|</span>
+            <button type="button" class="btn-secondary" onclick="exportRulesJson()" style="padding: 4px 9px; font-size: 11px;">导出 JSON</button>
+            <button type="button" class="btn-secondary" onclick="triggerImportRules()" style="padding: 4px 9px; font-size: 11px;">导入 JSON</button>
+            <input type="file" id="ruleFileInput" accept=".json" style="display: none;" onchange="handleRulesFileSelect(event)" />
+            <button type="button" class="btn-danger" onclick="confirmClearRules()" style="padding: 4px 9px; font-size: 11px;">清空规则</button>
           </div>
         </div>
 
@@ -1514,6 +1564,7 @@
               <option value="ip_cidr">IPv4-CIDR (如: 192.168.0.0/16)</option>
               <option value="port">目标单端口 (如: 80, 443)</option>
               <option value="port_range">目标端口范围 (如: 8000-9000)</option>
+              <option value="process_name">发起进程名 (如: chrome.exe, curl.exe)</option>
             </select>
             <input type="text" id="newRuleVal" placeholder="匹配表达式" style="flex: 1.5; min-width: 140px;" />
             <select id="newRuleAction" style="flex: 1; min-width: 110px;">
@@ -1533,15 +1584,16 @@
             <thead>
               <tr>
                 <th style="width: 50px; text-align: center;">启用</th>
+                <th style="width: 65px; text-align: center;">排序</th>
                 <th>规则名称</th>
                 <th>匹配条件</th>
-                <th style="width: 110px;">执行动作</th>
+                <th style="width: 105px;">执行动作</th>
                 <th style="width: 70px; text-align: center;">操作</th>
               </tr>
             </thead>
             <tbody id="rulesTableBody">
               <tr>
-                <td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+                <td colspan="6" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
                   加载规则列表中...
                 </td>
               </tr>
@@ -1638,7 +1690,7 @@
           </div>
           <div>
             <div class="modal-title" id="updateModalTitle">发现新版本 v0.0.0</div>
-            <div class="modal-subtitle" id="updateModalSubtitle">当前版本: v0.1.2</div>
+            <div class="modal-subtitle" id="updateModalSubtitle">当前版本: v0.2.0</div>
           </div>
         </div>
         <button type="button" class="btn-text" onclick="closeUpdateModal()" style="font-size: 16px; color: var(--text-muted); cursor: pointer;">&times;</button>
@@ -1656,6 +1708,94 @@
     </div>
   </div>
 
+  <!-- 附加进程模态弹窗 -->
+  <div id="attachModal" class="modal-overlay" style="display: none;" onclick="if(event.target===this)closeAttachModal()">
+    <div class="modal-card" style="width: 580px;">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="update-icon-circle">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-neon)" stroke-width="2">
+              <path d="M12 2v20M2 12h20"/>
+            </svg>
+          </div>
+          <div>
+            <div class="modal-title">附加注入到运行中进程</div>
+            <div class="modal-subtitle">从当前系统活动进程中选取目标并注入 Hook DLL</div>
+          </div>
+        </div>
+        <button type="button" class="btn-text" onclick="closeAttachModal()" style="font-size: 16px; color: var(--text-muted); cursor: pointer;">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 14px 20px;">
+        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+          <input type="text" id="attachProcSearch" placeholder="搜索进程名或 PID (如: chrome, 1234)..." oninput="filterSystemProcesses()" style="flex: 1;" />
+          <button type="button" class="btn-secondary" onclick="refreshSystemProcesses()" style="padding: 0 12px; font-size: 12px;">刷新列表</button>
+        </div>
+        <div class="table-viewport" style="max-height: 280px; overflow-y: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 80px;">PID</th>
+                <th>进程名</th>
+                <th style="width: 80px; text-align: center;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="attachProcTableBody">
+              <tr>
+                <td colspan="3" style="text-align: center; color: var(--text-subtle); padding: 30px 12px;">正在读取系统进程列表...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeAttachModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑快捷预设模态弹窗 -->
+  <div id="editPresetModal" class="modal-overlay" style="display: none;" onclick="if(event.target===this)closeEditPresetModal()">
+    <div class="modal-card" style="width: 480px;">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="update-icon-circle">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-neon)" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+          </div>
+          <div>
+            <div class="modal-title">编辑快捷预设</div>
+            <div class="modal-subtitle">自定义别名、可执行文件路径与启动参数</div>
+          </div>
+        </div>
+        <button type="button" class="btn-text" onclick="closeEditPresetModal()" style="font-size: 16px; color: var(--text-muted); cursor: pointer;">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+        <input type="hidden" id="editPresetIndex" value="-1" />
+        <div class="form-row">
+          <span class="form-label">显示别名</span>
+          <input type="text" id="editPresetName" placeholder="如: Chrome 浏览器" />
+        </div>
+        <div class="form-row">
+          <span class="form-label">程序可执行文件路径</span>
+          <div class="input-with-action">
+            <input type="text" id="editPresetTarget" placeholder="C:\Path\To\Program.exe" />
+            <button type="button" class="btn-secondary" onclick="browseEditPresetTarget()">浏览...</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <span class="form-label">启动命令行参数 (可选)</span>
+          <input type="text" id="editPresetArgs" placeholder="如: --no-proxy-server" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeEditPresetModal()">取消</button>
+        <button type="button" class="btn-cta" onclick="saveEditPreset()">保存更改</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast 消息容器 -->
   <div id="toastContainer" class="toast-container"></div>
 
@@ -1666,6 +1806,9 @@
     let currentSessionFilter = 'all';
     let currentSessions = [];
     let currentRules = [];
+    let connSearchKeyword = "";
+    let allSystemProcesses = [];
+    let pendingBrowseTarget = null;
 
     function sendIpc(cmd, payload = {}) {
       const msg = JSON.stringify({ cmd, ...payload });
@@ -1735,6 +1878,46 @@
       log("正在测试上游代理 " + proxy + " 延迟...");
     }
 
+    function onConnSearchInput() {
+      const el = document.getElementById("connSearchInput");
+      connSearchKeyword = el ? el.value.trim().toLowerCase() : "";
+      renderSessions();
+    }
+
+    function exportSessionsCsv() {
+      if (!currentSessions || currentSessions.length === 0) {
+        showToast("当前暂无连接记录可供导出", "info");
+        return;
+      }
+      const headers = ["时间", "发起进程", "PID", "目标地址", "命中规则", "分流决策", "传输状态", "上传(Bytes)", "下载(Bytes)", "耗时(ms)"];
+      const rows = currentSessions.map(s => [
+        `"${(s.time_str || '').replace(/"/g, '""')}"`,
+        `"${(s.process_name || '-').replace(/"/g, '""')}"`,
+        s.pid || 0,
+        `"${(s.target || '').replace(/"/g, '""')}"`,
+        `"${(s.rule_name || '-').replace(/"/g, '""')}"`,
+        `"${(s.action || '').replace(/"/g, '""')}"`,
+        `"${(s.status || '').replace(/"/g, '""')}"`,
+        s.upload_bytes || 0,
+        s.download_bytes || 0,
+        s.duration_ms || 0
+      ]);
+      const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(r => r.join(","))].join("\r\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const filename = `shadow-proxy-sessions-${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.csv`;
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("成功导出 " + currentSessions.length + " 条连接记录至 " + filename, "success");
+    }
+
     function setSessionFilter(filter) {
       currentSessionFilter = filter;
       document.querySelectorAll(".filter-group .btn-filter").forEach(b => {
@@ -1779,15 +1962,24 @@
       if (navBadge) navBadge.innerText = totalAll;
 
       const filtered = currentSessions.filter(s => {
-        if (currentSessionFilter === 'all') return true;
-        return s.action.toLowerCase() === currentSessionFilter;
+        if (currentSessionFilter !== 'all' && s.action.toLowerCase() !== currentSessionFilter) {
+          return false;
+        }
+        if (connSearchKeyword) {
+          const matchTarget = (s.target || '').toLowerCase().includes(connSearchKeyword);
+          const matchRule = (s.rule_name || '').toLowerCase().includes(connSearchKeyword);
+          const matchProc = (s.process_name || '').toLowerCase().includes(connSearchKeyword);
+          const matchPid = String(s.pid || '').includes(connSearchKeyword);
+          if (!matchTarget && !matchRule && !matchProc && !matchPid) return false;
+        }
+        return true;
       });
 
       if (filtered.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="8" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
-              ${totalAll === 0 ? "暂无捕获连接。启动透明代理并运行目标程序后在此实时滚屏。" : "该分类下暂无活动连接。"}
+            <td colspan="9" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+              ${totalAll === 0 ? "暂无捕获连接。启动透明代理并运行目标程序后在此实时滚屏。" : "该分类或搜索条件下暂无活动连接。"}
             </td>
           </tr>
         `;
@@ -1799,12 +1991,14 @@
         const actLower = s.action.toLowerCase();
         const statLower = s.status.toLowerCase();
         const durationSec = ((s.duration_ms || 0) / 1000).toFixed(1);
+        const procDisplay = s.process_name ? `${escapeHtml(s.process_name)}${s.pid ? ` (${s.pid})` : ''}` : '-';
 
         html += `
           <tr>
             <td style="font-family: var(--code-font); color: var(--text-muted);">${s.time_str || '-'}</td>
-            <td style="font-weight: 600; color: var(--text-primary);" title="${s.target}">${s.target}</td>
-            <td style="color: var(--text-muted); font-size: 11.5px;">${s.rule_name || '-'}</td>
+            <td style="color: var(--text-primary); font-size: 11.5px; font-weight: 500;" title="${escapeHtml(s.process_name || '')}">${procDisplay}</td>
+            <td style="font-weight: 600; color: var(--text-primary);" title="${escapeHtml(s.target)}">${escapeHtml(s.target)}</td>
+            <td style="color: var(--text-muted); font-size: 11.5px;">${escapeHtml(s.rule_name || '-')}</td>
             <td><span class="badge-action badge-action-${actLower}">${s.action}</span></td>
             <td><span class="badge-status badge-status-${statLower}">${s.status}</span></td>
             <td style="font-family: var(--code-font);">${formatBytes(s.upload_bytes)}</td>
@@ -1824,6 +2018,7 @@
       if (pat.type === "ip_cidr") return pat.value.ip + "/" + pat.value.prefix_len;
       if (pat.type === "port") return "Port(" + pat.value + ")";
       if (pat.type === "port_range") return "Port(" + pat.value.start + "-" + pat.value.end + ")";
+      if (pat.type === "process_name" || pat.type === "process") return "Process(" + pat.value + ")";
       if (pat.type === "final") return "FINAL (默认保底)";
       return JSON.stringify(pat);
     }
@@ -1837,7 +2032,7 @@
       if (rules.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+            <td colspan="6" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
               暂无配置规则。点击上方预设或添加新规则。
             </td>
           </tr>
@@ -1846,7 +2041,8 @@
       }
 
       let html = "";
-      for (const r of rules) {
+      for (let idx = 0; idx < rules.length; idx++) {
+        const r = rules[idx];
         const isFinal = r.pattern && r.pattern.type === "final";
         const patDesc = formatPatternText(r.pattern);
         const actLower = (r.action || "proxy").toLowerCase();
@@ -1854,19 +2050,204 @@
           ? `<span style="color: var(--text-subtle); font-size: 11px;">系统内置</span>`
           : `<button class="btn-terminate" onclick="deleteRule('${r.id}')">删除</button>`;
 
+        const canMoveUp = idx > 0 && !isFinal;
+        const canMoveDown = idx < rules.length - 2 && !isFinal;
+        const sortBtns = isFinal ? `<span style="color: var(--text-subtle);">-</span>` : `
+          <div style="display: flex; gap: 4px; justify-content: center;">
+            <button class="btn-icon-tiny" ${canMoveUp ? '' : 'disabled'} onclick="moveRule(${idx}, ${idx - 1})" title="上移优先级">&#9650;</button>
+            <button class="btn-icon-tiny" ${canMoveDown ? '' : 'disabled'} onclick="moveRule(${idx}, ${idx + 1})" title="下移优先级">&#9660;</button>
+          </div>
+        `;
+
         html += `
           <tr>
             <td style="text-align: center;">
               <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleRule('${r.id}', this.checked)" style="accent-color: var(--cyan-neon); cursor: pointer;" />
             </td>
-            <td style="font-weight: 600; color: ${r.enabled ? 'var(--text-primary)' : 'var(--text-subtle)'};">${r.name}</td>
-            <td style="font-family: var(--code-font); color: var(--cyan-neon); font-size: 11.5px;">${patDesc}</td>
+            <td style="text-align: center;">${sortBtns}</td>
+            <td style="font-weight: 600; color: ${r.enabled ? 'var(--text-primary)' : 'var(--text-subtle)'};">${escapeHtml(r.name)}</td>
+            <td style="font-family: var(--code-font); color: var(--cyan-neon); font-size: 11.5px;">${escapeHtml(patDesc)}</td>
             <td><span class="badge-action badge-action-${actLower}">${(r.action || 'PROXY').toUpperCase()}</span></td>
             <td style="text-align: center;">${actionBtn}</td>
           </tr>
         `;
       }
       tbody.innerHTML = html;
+    }
+
+    function moveRule(fromIndex, toIndex) {
+      if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
+      sendIpc("move_rule", { from: fromIndex, to: toIndex });
+      log("已调整规则优先级");
+    }
+
+    function exportRulesJson() {
+      if (!currentRules || currentRules.length === 0) {
+        showToast("当前暂无可导出的分流规则", "info");
+        return;
+      }
+      const jsonStr = JSON.stringify(currentRules, null, 2);
+      const blob = new Blob([jsonStr], { type: "application/json;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "shadow-proxy-rules.json";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("成功导出 " + currentRules.length + " 条分流规则", "success");
+    }
+
+    function triggerImportRules() {
+      const input = document.getElementById("ruleFileInput");
+      if (input) {
+        input.value = "";
+        input.click();
+      }
+    }
+
+    function handleRulesFileSelect(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const content = e.target.result;
+        try {
+          JSON.parse(content);
+          sendIpc("import_rules", { json: content });
+          showToast("已发送规则导入请求", "info");
+        } catch (err) {
+          showToast("规则文件 JSON 格式不合法: " + err.message, "error");
+        }
+      };
+      reader.readAsText(file, "UTF-8");
+    }
+
+    function confirmClearRules() {
+      if (confirm("确定要清空所有自定义分流规则吗？（默认保底规则将保留）")) {
+        sendIpc("clear_rules");
+      }
+    }
+
+    function openAttachModal() {
+      const modal = document.getElementById("attachModal");
+      if (modal) modal.style.display = "flex";
+      refreshSystemProcesses();
+    }
+
+    function closeAttachModal() {
+      const modal = document.getElementById("attachModal");
+      if (modal) modal.style.display = "none";
+    }
+
+    function refreshSystemProcesses() {
+      const tbody = document.getElementById("attachProcTableBody");
+      if (tbody) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="3" style="text-align: center; color: var(--text-subtle); padding: 30px 12px;">正在读取系统进程列表...</td>
+          </tr>
+        `;
+      }
+      sendIpc("list_system_processes");
+    }
+
+    window.onSystemProcessesLoaded = function(procs) {
+      allSystemProcesses = procs || [];
+      filterSystemProcesses();
+    };
+
+    function filterSystemProcesses() {
+      const tbody = document.getElementById("attachProcTableBody");
+      if (!tbody) return;
+      const searchInput = document.getElementById("attachProcSearch");
+      const kw = searchInput ? searchInput.value.trim().toLowerCase() : "";
+
+      const filtered = allSystemProcesses.filter(p => {
+        if (!kw) return true;
+        return (p.name || "").toLowerCase().includes(kw) || String(p.pid).includes(kw);
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="3" style="text-align: center; color: var(--text-subtle); padding: 30px 12px;">
+              ${allSystemProcesses.length === 0 ? "未检索到系统进程" : "无匹配进程"}
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      let html = "";
+      for (const p of filtered) {
+        html += `
+          <tr>
+            <td style="font-family: var(--code-font);">${p.pid}</td>
+            <td style="font-weight: 600; color: var(--text-primary);">${escapeHtml(p.name)}</td>
+            <td style="text-align: center;">
+              <button class="btn-primary" style="padding: 3px 8px; font-size: 11px;" onclick="attachTargetProcess(${p.pid})">附加注入</button>
+            </td>
+          </tr>
+        `;
+      }
+      tbody.innerHTML = html;
+    }
+
+    function attachTargetProcess(pid) {
+      sendIpc("attach_process", { pid });
+      closeAttachModal();
+      showToast("已向 PID " + pid + " 发送附加注入请求", "info");
+    }
+
+    function openEditPresetModal(index, event) {
+      if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+      }
+      const item = currentPresets[index];
+      if (!item) return;
+
+      const idxInput = document.getElementById("editPresetIndex");
+      const nameInput = document.getElementById("editPresetName");
+      const targetInput = document.getElementById("editPresetTarget");
+      const argsInput = document.getElementById("editPresetArgs");
+
+      if (idxInput) idxInput.value = index;
+      if (nameInput) nameInput.value = item.name || "";
+      if (targetInput) targetInput.value = item.target || "";
+      if (argsInput) argsInput.value = item.args || "";
+
+      const modal = document.getElementById("editPresetModal");
+      if (modal) modal.style.display = "flex";
+    }
+
+    function closeEditPresetModal() {
+      const modal = document.getElementById("editPresetModal");
+      if (modal) modal.style.display = "none";
+    }
+
+    function browseEditPresetTarget() {
+      pendingBrowseTarget = "editPreset";
+      sendIpc("browse_file");
+    }
+
+    function saveEditPreset() {
+      const idx = parseInt(document.getElementById("editPresetIndex").value, 10);
+      const name = document.getElementById("editPresetName").value.trim();
+      const target = document.getElementById("editPresetTarget").value.trim();
+      const args = document.getElementById("editPresetArgs").value.trim();
+
+      if (!target) {
+        showToast("目标程序路径不能为空", "error");
+        return;
+      }
+
+      const finalName = name || target;
+      sendIpc("update_preset", { index: idx, name: finalName, target, args });
+      closeEditPresetModal();
+      showToast("快捷预设已更新", "success");
     }
 
     function submitAddRule() {
@@ -1913,6 +2294,7 @@
     }
 
     function browseFile() {
+      pendingBrowseTarget = "inject";
       sendIpc("browse_file");
     }
 
@@ -1939,6 +2321,17 @@
     }
 
     window.updateDroppedFile = function(path, args) {
+      if (pendingBrowseTarget === "editPreset") {
+        const targetInput = document.getElementById("editPresetTarget");
+        const argsInput = document.getElementById("editPresetArgs");
+        if (targetInput) targetInput.value = path;
+        if (argsInput && args && args.trim().length > 0) {
+          argsInput.value = args.trim();
+        }
+        pendingBrowseTarget = null;
+        return;
+      }
+      pendingBrowseTarget = null;
       const pathInput = document.getElementById("targetPath");
       const argsInput = document.getElementById("targetArgs");
       if (pathInput) pathInput.value = path;
@@ -2257,6 +2650,9 @@
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                 <span>立即启动代理</span>
               </button>
+              <button type="button" class="preset-delete-btn" onclick="openEditPresetModal(${idx}, event)" title="编辑此快捷预设">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+              </button>
               <button type="button" class="preset-delete-btn" onclick="deletePreset(${idx}, event)" title="删除此快捷预设">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
               </button>
@@ -2362,7 +2758,7 @@
     }
 
     /* GitHub 版本更新检测与一键安装 */
-    let currentAppVersion = "0.1.2";
+    let currentAppVersion = "0.2.0";
     let latestReleaseData = null;
     let isDownloadingUpdate = false;
 

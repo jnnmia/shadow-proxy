@@ -1,4 +1,4 @@
-//! ghost-core: SOCKS5/HTTP 异步传输、DNS 严格防泄漏与流量中继引擎
+//! shadow-core: SOCKS5/HTTP 异步传输、DNS 严格防泄漏与流量中继引擎
 
 pub mod dns;
 pub mod protocol;
@@ -6,7 +6,10 @@ pub mod relay;
 pub mod router;
 pub mod session;
 
-pub use protocol::{check_upstream_health, socks5_handshake, ProtocolError, TargetAddr};
+pub use protocol::{
+    check_upstream_health, check_upstream_health_auto, http_connect, socks5_handshake, InboundHeader,
+    ProtocolError, TargetAddr, GHOST_MAGIC, SHADOW_MAGIC,
+};
 pub use relay::{BoundRelayServer, RelayConfig, RelayError, RelayServer, TrafficStats};
 pub use router::{RouteAction, RouteDecision, RuleItem, RulePattern, Router};
 pub use session::{SessionRecord, SessionStatus, SessionTracker};
@@ -191,6 +194,7 @@ mod tests {
         let relay_server = RelayServer::new(RelayConfig {
             listen_addr: relay_addr,
             upstream_proxy: socks_addr,
+            upstream_is_http: false,
             proxy_auth: None,
             strict_dns: true,
             dns_over_tcp_server: None,
@@ -251,6 +255,7 @@ mod tests {
             RelayConfig {
                 listen_addr: relay_addr,
                 upstream_proxy: "127.0.0.1:9".parse().unwrap(), // 无效代理地址，直连不应访问它
+                upstream_is_http: false,
                 proxy_auth: None,
                 strict_dns: true,
                 dns_over_tcp_server: None,
@@ -307,6 +312,7 @@ mod tests {
             RelayConfig {
                 listen_addr: relay_addr,
                 upstream_proxy: "127.0.0.1:9".parse().unwrap(),
+                upstream_is_http: false,
                 proxy_auth: None,
                 strict_dns: true,
                 dns_over_tcp_server: None,
@@ -353,6 +359,7 @@ mod tests {
             RelayConfig {
                 listen_addr: relay_addr,
                 upstream_proxy: "127.0.0.1:9".parse().unwrap(),
+                upstream_is_http: false,
                 proxy_auth: None,
                 strict_dns: true,
                 dns_over_tcp_server: None,
@@ -396,6 +403,7 @@ mod tests {
             RelayConfig {
                 listen_addr: relay_addr,
                 upstream_proxy: "127.0.0.1:9".parse().unwrap(),
+                upstream_is_http: false,
                 proxy_auth: None,
                 strict_dns: true,
                 dns_over_tcp_server: None,
@@ -491,6 +499,7 @@ mod tests {
             RelayConfig {
                 listen_addr: relay_addr,
                 upstream_proxy: "127.0.0.1:9".parse().unwrap(),
+                upstream_is_http: false,
                 proxy_auth: None,
                 strict_dns: true,
                 dns_over_tcp_server: Some(dns_addr),
@@ -566,6 +575,7 @@ mod tests {
             RelayConfig {
                 listen_addr: relay_addr,
                 upstream_proxy: dead_proxy,
+                upstream_is_http: false,
                 proxy_auth: None,
                 strict_dns: false,
                 dns_over_tcp_server: None,
@@ -598,6 +608,154 @@ mod tests {
         assert!(!sessions.is_empty());
         assert_eq!(sessions[0].status, SessionStatus::Failed);
 
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_full_relay_http_connect_roundtrip() {
+        // 1. 目标真实 Echo 服务端
+        let echo_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let echo_addr = echo_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = echo_listener.accept().await.unwrap();
+            let mut buf = [0u8; 8];
+            s.read_exact(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"HTTP_REQ");
+            s.write_all(b"HTTP_RES").await.unwrap();
+        });
+
+        // 2. Mock 上游 HTTP CONNECT 代理服务端
+        let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = proxy_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut client_conn, _) = proxy_listener.accept().await.unwrap();
+            let mut header_buf = [0u8; 256];
+            let n = client_conn.read(&mut header_buf).await.unwrap();
+            let req_str = String::from_utf8_lossy(&header_buf[..n]);
+            assert!(req_str.starts_with("CONNECT "));
+            assert!(req_str.contains("HTTP/1.1"));
+
+            // 回复 200 Connection Established 建立隧道
+            client_conn.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.unwrap();
+
+            // 连接目标真实 Echo 服务端并双向桥接数据
+            let target_conn = TcpStream::connect(echo_addr).await.unwrap();
+            let (mut cr, mut cw) = client_conn.into_split();
+            let (mut tr, mut tw) = target_conn.into_split();
+            let _ = tokio::join!(tokio::io::copy(&mut cr, &mut tw), tokio::io::copy(&mut tr, &mut cw));
+        });
+
+        // 3. 启动本地中继服务 (upstream_is_http: true)
+        let relay_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_listener.local_addr().unwrap();
+        drop(relay_listener);
+
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let tracker = Arc::new(SessionTracker::default());
+        let relay_server = RelayServer::with_router_and_tracker(
+            RelayConfig {
+                listen_addr: relay_addr,
+                upstream_proxy: proxy_addr,
+                upstream_is_http: true,
+                proxy_auth: None,
+                strict_dns: true,
+                dns_over_tcp_server: None,
+                handshake_timeout: None,
+            },
+            Arc::new(std::sync::RwLock::new(Router::preset_global_proxy())),
+            Arc::clone(&tracker),
+        );
+
+        tokio::spawn(async move {
+            let _ = relay_server.run(shutdown_rx).await;
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // 4. 发送 v2 帧头测试中继与 HTTP CONNECT 握手
+        let mut client = TcpStream::connect(relay_addr).await.unwrap();
+        let v2_hdr = InboundHeader::new(
+            TargetAddr::Ip(echo_addr),
+            Some(9999),
+            Some("demo_proc.exe".to_string()),
+        );
+        client.write_all(&v2_hdr.encode_v2()).await.unwrap();
+
+        client.write_all(b"HTTP_REQ").await.unwrap();
+        let mut resp = [0u8; 8];
+        client.read_exact(&mut resp).await.unwrap();
+        assert_eq!(&resp, b"HTTP_RES");
+
+        client.shutdown().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let sessions = tracker.list_sessions(5);
+        assert!(!sessions.is_empty());
+        assert_eq!(sessions[0].pid, Some(9999));
+        assert_eq!(sessions[0].process_name.as_deref(), Some("demo_proc.exe"));
+        assert!(sessions[0].upload_bytes >= 8);
+        assert!(sessions[0].download_bytes >= 8);
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_relay_live_stream_stats_sampling() {
+        // 验证长连接在活跃期间（未断开前）上下行流量不为 0
+        let direct_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let direct_addr = direct_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = direct_listener.accept().await.unwrap();
+            let mut buf = [0u8; 100];
+            s.read_exact(&mut buf).await.unwrap();
+            s.write_all(&[42u8; 100]).await.unwrap();
+            // 保持连接不关闭，等待测试采样断言
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        });
+
+        let relay_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_listener.local_addr().unwrap();
+        drop(relay_listener);
+
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let tracker = Arc::new(SessionTracker::default());
+        let relay_server = RelayServer::with_router_and_tracker(
+            RelayConfig {
+                listen_addr: relay_addr,
+                upstream_proxy: "127.0.0.1:9".parse().unwrap(),
+                upstream_is_http: false,
+                proxy_auth: None,
+                strict_dns: true,
+                dns_over_tcp_server: None,
+                handshake_timeout: None,
+            },
+            Arc::new(std::sync::RwLock::new(Router::preset_direct_all())),
+            Arc::clone(&tracker),
+        );
+
+        tokio::spawn(async move {
+            let _ = relay_server.run(shutdown_rx).await;
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let mut client = TcpStream::connect(relay_addr).await.unwrap();
+        let target = TargetAddr::Ip(direct_addr);
+        client.write_all(&target.encode()).await.unwrap();
+        client.write_all(&[1u8; 100]).await.unwrap();
+
+        let mut resp = [0u8; 100];
+        client.read_exact(&mut resp).await.unwrap();
+
+        // 关键断言：此时客户端连接仍处于连接未关闭活跃状态，tracker 即时提取瞬时上下行流量
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        let active_sessions = tracker.list_sessions(5);
+        assert!(!active_sessions.is_empty());
+        assert_eq!(active_sessions[0].status, SessionStatus::Active);
+        assert!(active_sessions[0].upload_bytes >= 100, "活跃期间上传流量必须即时累加展现");
+        assert!(active_sessions[0].download_bytes >= 100, "活跃期间下载流量必须即时累加展现");
+
+        client.shutdown().await.unwrap();
         let _ = shutdown_tx.send(());
     }
 }

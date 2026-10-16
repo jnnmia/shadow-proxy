@@ -45,6 +45,8 @@ pub enum RulePattern {
     Port(u16),
     /// 目标端口范围 (如 8000..=9000)
     PortRange { start: u16, end: u16 },
+    /// 发起进程名匹配 (如 "git.exe", "curl.exe")
+    ProcessName(String),
     /// 默认兜底规则
     Final,
 }
@@ -184,8 +186,13 @@ impl Router {
         }
     }
 
-    /// 评估目标地址并返回路由匹配决策
+    /// 评估目标地址并返回路由匹配决策（保持向前兼容）
     pub fn eval(&self, target: &TargetAddr) -> RouteDecision {
+        self.eval_with_proc(target, None)
+    }
+
+    /// 评估目标地址与发起进程名，并返回路由匹配决策
+    pub fn eval_with_proc(&self, target: &TargetAddr, proc_name: Option<&str>) -> RouteDecision {
         let (host, port, ip_opt) = match target {
             TargetAddr::Ip(sa) => {
                 let ip = sa.ip();
@@ -207,7 +214,7 @@ impl Router {
                 continue;
             }
 
-            if Self::match_pattern(&rule.pattern, &host, port, ip_opt) {
+            if Self::match_pattern(&rule.pattern, &host, port, ip_opt, proc_name) {
                 return RouteDecision {
                     action: rule.action,
                     rule_name: rule.name.clone(),
@@ -229,6 +236,7 @@ impl Router {
         host: &str,
         port: u16,
         ip_v4: Option<Ipv4Addr>,
+        proc_name: Option<&str>,
     ) -> bool {
         match pattern {
             RulePattern::DomainSuffix(suffix) => {
@@ -253,6 +261,19 @@ impl Router {
             }
             RulePattern::Port(p) => port == *p,
             RulePattern::PortRange { start, end } => port >= *start && port <= *end,
+            RulePattern::ProcessName(expected) => {
+                if let Some(actual) = proc_name {
+                    let act = actual.to_ascii_lowercase();
+                    let exp = expected.to_ascii_lowercase();
+                    if act == exp {
+                        return true;
+                    }
+                    if !exp.ends_with(".exe") && format!("{}.exe", exp) == act {
+                        return true;
+                    }
+                }
+                false
+            }
             RulePattern::Final => true,
         }
     }
@@ -280,6 +301,7 @@ impl Router {
             RulePattern::IpCidr { ip, prefix_len } => format!("{}/{}", ip, prefix_len),
             RulePattern::Port(p) => format!("Port({})", p),
             RulePattern::PortRange { start, end } => format!("Port({}-{})", start, end),
+            RulePattern::ProcessName(p) => format!("Process({})", p),
             RulePattern::Final => "FINAL".into(),
         }
     }
@@ -309,6 +331,31 @@ impl Router {
         } else {
             false
         }
+    }
+
+    /// 重新调整规则优先级位置
+    pub fn move_rule(&mut self, from: usize, to: usize) -> bool {
+        if from >= self.rules.len() || to >= self.rules.len() || from == to {
+            return false;
+        }
+        let rule = self.rules.remove(from);
+        self.rules.insert(to, rule);
+        true
+    }
+
+    /// 清空所有自定义规则（仅保留 Final 兜底规则）
+    pub fn clear_custom_rules(&mut self) {
+        self.rules.retain(|r| matches!(r.pattern, RulePattern::Final));
+    }
+
+    /// 序列化为规范 JSON 字符串
+    pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    /// 从 JSON 字符串解析 Router 配置
+    pub fn from_json(json_str: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json_str)
     }
 }
 
@@ -373,5 +420,83 @@ mod tests {
         router.set_rule_enabled("block-smtp", false);
         let dec2 = router.eval(&target_smtp);
         assert_eq!(dec2.action, RouteAction::Proxy);
+    }
+
+    #[test]
+    fn test_process_name_routing() {
+        let mut router = Router::preset_direct_all();
+
+        // 添加规则：git.exe 走代理，curl 走直连，bad.exe 阻断
+        router.add_rule(RuleItem {
+            id: "proc-git".into(),
+            name: "Git 强制代理".into(),
+            pattern: RulePattern::ProcessName("git.exe".into()),
+            action: RouteAction::Proxy,
+            enabled: true,
+        });
+        router.add_rule(RuleItem {
+            id: "proc-bad".into(),
+            name: "恶意程序阻断".into(),
+            pattern: RulePattern::ProcessName("malicious".into()), // 自动补充 .exe 匹配
+            action: RouteAction::Block,
+            enabled: true,
+        });
+
+        let target = TargetAddr::Domain("github.com".into(), 443);
+
+        // 1. git.exe 发起 -> PROXY
+        let dec_git = router.eval_with_proc(&target, Some("git.exe"));
+        assert_eq!(dec_git.action, RouteAction::Proxy);
+        assert_eq!(dec_git.rule_name, "Git 强制代理");
+
+        // 2. GIT.EXE 大写发起 -> PROXY
+        let dec_git_upper = router.eval_with_proc(&target, Some("GIT.EXE"));
+        assert_eq!(dec_git_upper.action, RouteAction::Proxy);
+
+        // 3. malicious.exe 发起 -> BLOCK (无 .exe 后缀规则智能匹配)
+        let dec_bad = router.eval_with_proc(&target, Some("malicious.exe"));
+        assert_eq!(dec_bad.action, RouteAction::Block);
+
+        // 4. curl.exe 发起 -> DIRECT (命中 final 规则)
+        let dec_curl = router.eval_with_proc(&target, Some("curl.exe"));
+        assert_eq!(dec_curl.action, RouteAction::Direct);
+
+        // 5. 无进程名发起 -> DIRECT
+        let dec_none = router.eval_with_proc(&target, None);
+        assert_eq!(dec_none.action, RouteAction::Direct);
+    }
+
+    #[test]
+    fn test_router_reorder_and_json() {
+        let mut router = Router::preset_direct_all();
+        router.add_rule(RuleItem {
+            id: "r1".into(),
+            name: "Rule 1".into(),
+            pattern: RulePattern::Port(80),
+            action: RouteAction::Proxy,
+            enabled: true,
+        });
+        router.add_rule(RuleItem {
+            id: "r2".into(),
+            name: "Rule 2".into(),
+            pattern: RulePattern::Port(443),
+            action: RouteAction::Block,
+            enabled: true,
+        });
+
+        assert_eq!(router.rules[0].id, "r1");
+        assert_eq!(router.rules[1].id, "r2");
+
+        // 移动 r2 到第一位
+        let ok = router.move_rule(1, 0);
+        assert!(ok);
+        assert_eq!(router.rules[0].id, "r2");
+        assert_eq!(router.rules[1].id, "r1");
+
+        // JSON 导出与恢复
+        let json = router.to_json_pretty().unwrap();
+        let loaded = Router::from_json(&json).unwrap();
+        assert_eq!(loaded.rules.len(), router.rules.len());
+        assert_eq!(loaded.rules[0].name, "Rule 2");
     }
 }

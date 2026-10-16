@@ -118,8 +118,15 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Ghost Proxifier CLI 已启动");
 
-    let upstream_addr: SocketAddr = args
-        .proxy
+    let (upstream_is_http, raw_proxy) = if let Some(stripped) = args.proxy.strip_prefix("http://") {
+        (true, stripped)
+    } else if let Some(stripped) = args.proxy.strip_prefix("socks5://") {
+        (false, stripped)
+    } else {
+        (false, args.proxy.as_str())
+    };
+
+    let upstream_addr: SocketAddr = raw_proxy
         .parse()
         .map_err(|e| anyhow::anyhow!("无效的上游代理地址 [{}]: {}", args.proxy, e))?;
 
@@ -136,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
     let relay_config = RelayConfig {
         listen_addr,
         upstream_proxy: upstream_addr,
+        upstream_is_http,
         proxy_auth: proxy_auth.clone(),
         strict_dns: args.strict_dns,
         dns_over_tcp_server: Some("223.5.5.5:53".parse().unwrap()),
@@ -182,8 +190,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 上游代理健康探活验证，避免虚假就绪
     let auth_ref = proxy_auth.as_ref().map(|(u, p)| (u.as_str(), p.as_str()));
-    match shadow_core::check_upstream_health(
+    match shadow_core::check_upstream_health_auto(
         upstream_addr,
+        upstream_is_http,
         auth_ref,
         std::time::Duration::from_millis(1000),
     )
