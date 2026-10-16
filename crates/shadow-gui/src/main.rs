@@ -39,6 +39,12 @@ enum UserEvent {
     TrayShow,
     TrayToggleRelay,
     TrayExit,
+    UpdateCheckResult {
+        silent: bool,
+        success: bool,
+        error: Option<String>,
+        data: Option<serde_json::Value>,
+    },
 }
 
 #[derive(Deserialize, Debug)]
@@ -111,6 +117,8 @@ enum IpcCommand {
     OpenUrl { url: String },
     #[serde(rename = "download_and_install")]
     DownloadAndInstall { url: String, filename: String },
+    #[serde(rename = "check_update")]
+    CheckUpdate { silent: bool },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1184,6 +1192,145 @@ fn list_system_processes() -> Vec<SystemProcessItem> {
     result
 }
 
+fn format_curl_proxy(proxy_str: &str) -> Option<String> {
+    let trimmed = proxy_str.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        Some(trimmed.to_string())
+    } else if trimmed.starts_with("socks5://") || trimmed.starts_with("socks5h://") {
+        let addr = trimmed
+            .trim_start_matches("socks5://")
+            .trim_start_matches("socks5h://");
+        Some(format!("socks5h://{}", addr))
+    } else {
+        Some(format!("socks5h://{}", trimmed))
+    }
+}
+
+fn check_github_update(upstream_proxy: &str) -> Result<serde_json::Value, String> {
+    let proxy_arg = format_curl_proxy(upstream_proxy);
+
+    let run_curl_api = |proxy: Option<&str>| -> Result<serde_json::Value, String> {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("curl.exe");
+        cmd.args([
+            "-s",
+            "--fail",
+            "--connect-timeout",
+            "8",
+            "--max-time",
+            "15",
+            "-H",
+            "Accept: application/vnd.github.v3+json",
+            "-H",
+            "User-Agent: ShadowProxy-App",
+        ]);
+        if let Some(p) = proxy {
+            cmd.arg("--proxy").arg(p);
+        }
+        cmd.arg("https://api.github.com/repos/jnnmia/shadow-proxy/releases/latest");
+        cmd.creation_flags(0x08000000);
+
+        let output = cmd.output().map_err(|e| format!("执行 curl 失败: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("curl 退出代码: {:?}", output.status.code()));
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        serde_json::from_str::<serde_json::Value>(&text)
+            .map_err(|e| format!("解析 GitHub 响应失败: {}", e))
+    };
+
+    let run_curl_redirect = |proxy: Option<&str>| -> Result<serde_json::Value, String> {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("curl.exe");
+        cmd.args([
+            "-s",
+            "-I",
+            "--connect-timeout",
+            "8",
+            "--max-time",
+            "15",
+            "-H",
+            "User-Agent: ShadowProxy-App",
+        ]);
+        if let Some(p) = proxy {
+            cmd.arg("--proxy").arg(p);
+        }
+        cmd.arg("https://github.com/jnnmia/shadow-proxy/releases/latest");
+        cmd.creation_flags(0x08000000);
+
+        let output = cmd.output().map_err(|e| format!("执行 curl 失败: {}", e))?;
+        let headers = String::from_utf8_lossy(&output.stdout);
+        for line in headers.lines() {
+            let lower = line.to_ascii_lowercase();
+            if lower.starts_with("location:") {
+                let parts: Vec<&str> = line.splitn(2, ':').collect();
+                if parts.len() == 2 {
+                    let target_url = parts[1].trim();
+                    if let Some(tag) = target_url.split("/tag/").nth(1) {
+                        let clean_tag = tag.trim().to_string();
+                        let setup_name = format!("ShadowProxy-Setup-{}.exe", clean_tag);
+                        let download_url = format!(
+                            "https://github.com/jnnmia/shadow-proxy/releases/download/{}/{}",
+                            clean_tag, setup_name
+                        );
+                        return Ok(serde_json::json!({
+                            "tag_name": clean_tag,
+                            "name": clean_tag,
+                            "html_url": target_url,
+                            "body": "可前往 GitHub Releases 页面查看完整版本更新说明。",
+                            "published_at": null,
+                            "assets": [
+                                {
+                                    "name": setup_name,
+                                    "browser_download_url": download_url
+                                }
+                            ]
+                        }));
+                    }
+                }
+            }
+        }
+        Err("未能从 GitHub Releases 重定向解析出最新版本".to_string())
+    };
+
+    if let Some(ref p) = proxy_arg {
+        if let Ok(val) = run_curl_api(Some(p)) {
+            return Ok(val);
+        }
+        if p.starts_with("socks5h://") {
+            let http_proxy = format!("http://{}", p.trim_start_matches("socks5h://"));
+            if let Ok(val) = run_curl_api(Some(&http_proxy)) {
+                return Ok(val);
+            }
+        }
+    }
+
+    if let Ok(val) = run_curl_api(None) {
+        return Ok(val);
+    }
+
+    if let Some(ref p) = proxy_arg {
+        if let Ok(val) = run_curl_redirect(Some(p)) {
+            return Ok(val);
+        }
+        if p.starts_with("socks5h://") {
+            let http_proxy = format!("http://{}", p.trim_start_matches("socks5h://"));
+            if let Ok(val) = run_curl_redirect(Some(&http_proxy)) {
+                return Ok(val);
+            }
+        }
+    }
+
+    if let Ok(val) = run_curl_redirect(None) {
+        return Ok(val);
+    }
+
+    Err("无法连接至 GitHub 获取更新，请检查网络或上游代理配置".to_string())
+}
+
 fn resolve_hook_dll(arch: Architecture) -> anyhow::Result<PathBuf> {
     let dll_names = match arch {
         Architecture::X64 => ["shadow_hook.dll", "ghost_hook.dll"],
@@ -2008,78 +2155,127 @@ fn run_app() -> anyhow::Result<()> {
                                         ));
                                     } else {
                                         let proxy_ev = proxy.clone();
+                                        let upstream = state.upstream_proxy.clone();
                                         std::thread::spawn(move || {
-                                    struct DownloadGuard;
-                                    impl Drop for DownloadGuard {
-                                        fn drop(&mut self) {
-                                            IS_DOWNLOADING.store(false, std::sync::atomic::Ordering::SeqCst);
-                                        }
-                                    }
-                                    let _guard = DownloadGuard;
-
-                                    use std::os::windows::process::CommandExt;
-                                    let temp_dir = std::env::temp_dir();
-                                    let safe_name = std::path::Path::new(&filename)
-                                        .file_name()
-                                        .and_then(|s| s.to_str())
-                                        .map(|s| s.trim())
-                                        .filter(|s| {
-                                            s.ends_with(".exe")
-                                                && !s.is_empty()
-                                                && !s.contains("..")
-                                                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
-                                        })
-                                        .unwrap_or("ShadowProxy-Setup.exe");
-                                    let dest = temp_dir.join(safe_name);
-
-                                    let _ = proxy_ev.send_event(UserEvent::Log(format!("[UPDATE] 正在下载最新安装包: {}", safe_name)));
-
-                                    let status = std::process::Command::new("curl.exe")
-                                        .args([
-                                            "-L",
-                                            "--fail",
-                                            "--silent",
-                                            "--show-error",
-                                            "--connect-timeout",
-                                            "15",
-                                            "--max-time",
-                                            "600",
-                                            "-o",
-                                            dest.to_string_lossy().as_ref(),
-                                            "--",
-                                            &clean_url,
-                                        ])
-                                        .creation_flags(0x08000000)
-                                        .status();
-
-                                    match status {
-                                        Ok(s) if s.success() && dest.exists() => {
-                                            let _ = proxy_ev.send_event(UserEvent::Log("[UPDATE] 安装包下载完成，正在启动安装程序...".to_string()));
-                                            let _ = proxy_ev.send_event(UserEvent::Log("[UPDATE] 安装程序已启动，请退出当前程序以完成更新".to_string()));
-                                            use std::os::windows::ffi::OsStrExt;
-                                            let exe_w: Vec<u16> = dest.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-                                            let open_w: Vec<u16> = "open\0".encode_utf16().collect();
-                                            unsafe {
-                                                windows_sys::Win32::UI::Shell::ShellExecuteW(
-                                                    0 as _,
-                                                    open_w.as_ptr(),
-                                                    exe_w.as_ptr(),
-                                                    core::ptr::null(),
-                                                    core::ptr::null(),
-                                                    windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
-                                                );
+                                            struct DownloadGuard;
+                                            impl Drop for DownloadGuard {
+                                                fn drop(&mut self) {
+                                                    IS_DOWNLOADING.store(false, std::sync::atomic::Ordering::SeqCst);
+                                                }
                                             }
-                                        }
-                                        Ok(s) => {
-                                            let _ = proxy_ev.send_event(UserEvent::Log(format!("[UPDATE] 下载安装包失败 (代码: {:?})，建议前往 GitHub 手动下载", s.code())));
-                                        }
-                                        Err(e) => {
-                                            let _ = proxy_ev.send_event(UserEvent::Log(format!("[UPDATE] 调用系统下载器异常: {}，建议前往 GitHub 手动下载", e)));
-                                        }
-                                    }
+                                            let _guard = DownloadGuard;
+
+                                            use std::os::windows::process::CommandExt;
+                                            let temp_dir = std::env::temp_dir();
+                                            let safe_name = std::path::Path::new(&filename)
+                                                .file_name()
+                                                .and_then(|s| s.to_str())
+                                                .map(|s| s.trim())
+                                                .filter(|s| {
+                                                    s.ends_with(".exe")
+                                                        && !s.is_empty()
+                                                        && !s.contains("..")
+                                                        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+                                                })
+                                                .unwrap_or("ShadowProxy-Setup.exe");
+                                            let dest = temp_dir.join(safe_name);
+
+                                            let _ = proxy_ev.send_event(UserEvent::Log(format!("[UPDATE] 正在下载最新安装包: {}", safe_name)));
+
+                                            let proxy_arg = format_curl_proxy(&upstream);
+                                            let run_download = |p: Option<&str>| -> Result<(), i32> {
+                                                let mut cmd = std::process::Command::new("curl.exe");
+                                                cmd.args([
+                                                    "-L",
+                                                    "--fail",
+                                                    "--silent",
+                                                    "--show-error",
+                                                    "--connect-timeout",
+                                                    "15",
+                                                    "--max-time",
+                                                    "600",
+                                                    "-o",
+                                                    dest.to_string_lossy().as_ref(),
+                                                ]);
+                                                if let Some(proxy_val) = p {
+                                                    cmd.arg("--proxy").arg(proxy_val);
+                                                }
+                                                cmd.arg("--").arg(&clean_url);
+                                                cmd.creation_flags(0x08000000);
+                                                match cmd.status() {
+                                                    Ok(s) if s.success() && dest.exists() => Ok(()),
+                                                    Ok(s) => Err(s.code().unwrap_or(-1)),
+                                                    Err(_) => Err(-2),
+                                                }
+                                            };
+
+                                            let mut res = if let Some(ref p) = proxy_arg {
+                                                run_download(Some(p))
+                                            } else {
+                                                run_download(None)
+                                            };
+
+                                            if res.is_err() && proxy_arg.is_some() {
+                                                if let Some(ref p) = proxy_arg {
+                                                    if p.starts_with("socks5h://") {
+                                                        let http_proxy = format!("http://{}", p.trim_start_matches("socks5h://"));
+                                                        res = run_download(Some(&http_proxy));
+                                                    }
+                                                }
+                                                if res.is_err() {
+                                                    res = run_download(None);
+                                                }
+                                            }
+
+                                            match res {
+                                                Ok(()) => {
+                                                    let _ = proxy_ev.send_event(UserEvent::Log("[UPDATE] 安装包下载完成，正在启动安装程序...".to_string()));
+                                                    let _ = proxy_ev.send_event(UserEvent::Log("[UPDATE] 安装程序已启动，请退出当前程序以完成更新".to_string()));
+                                                    use std::os::windows::ffi::OsStrExt;
+                                                    let exe_w: Vec<u16> = dest.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+                                                    let open_w: Vec<u16> = "open\0".encode_utf16().collect();
+                                                    unsafe {
+                                                        windows_sys::Win32::UI::Shell::ShellExecuteW(
+                                                            0 as _,
+                                                            open_w.as_ptr(),
+                                                            exe_w.as_ptr(),
+                                                            core::ptr::null(),
+                                                            core::ptr::null(),
+                                                            windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+                                                        );
+                                                    }
+                                                }
+                                                Err(code) => {
+                                                    let _ = proxy_ev.send_event(UserEvent::Log(format!("[UPDATE] 下载安装包失败 (代码: {:?})，建议前往 GitHub 手动下载", code)));
+                                                }
+                                            }
                                         });
                                     }
                                 }
+                            }
+                            IpcCommand::CheckUpdate { silent } => {
+                                let proxy_ev = proxy.clone();
+                                let upstream = state.upstream_proxy.clone();
+                                std::thread::spawn(move || {
+                                    match check_github_update(&upstream) {
+                                        Ok(data) => {
+                                            let _ = proxy_ev.send_event(UserEvent::UpdateCheckResult {
+                                                silent,
+                                                success: true,
+                                                error: None,
+                                                data: Some(data),
+                                            });
+                                        }
+                                        Err(err) => {
+                                            let _ = proxy_ev.send_event(UserEvent::UpdateCheckResult {
+                                                silent,
+                                                success: false,
+                                                error: Some(err),
+                                                data: None,
+                                            });
+                                        }
+                                    }
+                                });
                             }
                         }
                     }
@@ -2105,6 +2301,25 @@ fn run_app() -> anyhow::Result<()> {
                     if let Ok(json) = serde_json::to_string(&full) {
                         let _ = webview.evaluate_script(&format!(
                             "window.updateState({});",
+                            json
+                        ));
+                    }
+                }
+                UserEvent::UpdateCheckResult {
+                    silent,
+                    success,
+                    error,
+                    data,
+                } => {
+                    let res_obj = serde_json::json!({
+                        "silent": silent,
+                        "success": success,
+                        "error": error,
+                        "data": data,
+                    });
+                    if let Ok(json) = serde_json::to_string(&res_obj) {
+                        let _ = webview.evaluate_script(&format!(
+                            "if (window.onUpdateCheckResult) {{ window.onUpdateCheckResult({}); }}",
                             json
                         ));
                     }

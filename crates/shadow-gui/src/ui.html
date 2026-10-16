@@ -2790,7 +2790,9 @@
       return 0;
     }
 
-    async function checkUpdate(silent = false) {
+    let updateCheckTimer = null;
+
+    function checkUpdate(silent = false) {
       if (silent) {
         const lastCheck = parseInt(localStorage.getItem("shadow_last_update_check") || "0", 10);
         if (Date.now() - lastCheck < 4 * 3600 * 1000) {
@@ -2803,64 +2805,62 @@
       if (icon) icon.classList.add("spinning");
       if (btn) btn.disabled = true;
 
-      const apiUrl = "https://api.github.com/repos/jnnmia/shadow-proxy/releases/latest";
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10000);
+      if (updateCheckTimer) clearTimeout(updateCheckTimer);
+      updateCheckTimer = setTimeout(() => {
+        if (icon) icon.classList.remove("spinning");
+        if (btn) btn.disabled = false;
+      }, 20000);
 
-      try {
-        const res = await fetch(apiUrl, {
-          signal: controller.signal,
-          headers: {
-            "Accept": "application/vnd.github.v3+json"
-          }
-        });
-        clearTimeout(timer);
+      sendIpc("check_update", { silent });
+    }
 
-        if (!res.ok) {
-          if (res.status === 403) {
-            localStorage.setItem("shadow_last_update_check", String(Date.now()));
-            throw new Error("API 访问频次受限 (60次/小时)，请稍后重试");
-          } else if (res.status === 404) {
-            throw new Error("当前仓库暂无正式发布版本");
-          } else {
-            throw new Error("HTTP " + res.status);
-          }
-        }
+    window.onUpdateCheckResult = function(res) {
+      const icon = document.getElementById("iconCheckUpdate");
+      const btn = document.getElementById("btnCheckUpdate");
+      if (icon) icon.classList.remove("spinning");
+      if (btn) btn.disabled = false;
+      if (updateCheckTimer) {
+        clearTimeout(updateCheckTimer);
+        updateCheckTimer = null;
+      }
 
-        localStorage.setItem("shadow_last_update_check", String(Date.now()));
-        const data = await res.json();
-        const remoteVersion = data.tag_name || data.name || "";
-        const hasUpdate = compareVersions(remoteVersion, currentAppVersion) > 0;
+      if (!res) return;
+      const silent = !!res.silent;
 
-        const badgeDot = document.getElementById("updateBadgeDot");
-        if (hasUpdate) {
-          latestReleaseData = data;
-          if (badgeDot) badgeDot.style.display = "inline-block";
-          log("[UPDATE] 发现新版本: " + remoteVersion + " (当前: v" + currentAppVersion + ")");
-          if (!silent) {
-            showUpdateModal(data);
-          } else {
-            showToast("发现新版本 " + remoteVersion + "，可前往检查更新", "info");
-          }
-        } else {
-          if (badgeDot) badgeDot.style.display = "none";
-          log("[UPDATE] 当前已是最新版本 (v" + currentAppVersion + ")");
-          if (!silent) {
-            showToast("当前已是最新版本 (v" + currentAppVersion + ")", "success");
-          }
-        }
-      } catch (err) {
-        clearTimeout(timer);
-        const errMsg = err.name === "AbortError" ? "连接超时" : err.message;
+      if (!res.success) {
+        const errMsg = res.error || "网络连接异常";
         log("[UPDATE] 检查更新失败: " + errMsg);
         if (!silent) {
           showToast("检查更新失败: " + errMsg, "error");
         }
-      } finally {
-        if (icon) icon.classList.remove("spinning");
-        if (btn) btn.disabled = false;
+        return;
       }
-    }
+
+      localStorage.setItem("shadow_last_update_check", String(Date.now()));
+      const data = res.data;
+      if (!data) return;
+
+      const remoteVersion = data.tag_name || data.name || "";
+      const hasUpdate = compareVersions(remoteVersion, currentAppVersion) > 0;
+      const badgeDot = document.getElementById("updateBadgeDot");
+
+      if (hasUpdate) {
+        latestReleaseData = data;
+        if (badgeDot) badgeDot.style.display = "inline-block";
+        log("[UPDATE] 发现新版本: " + remoteVersion + " (当前: v" + currentAppVersion + ")");
+        if (!silent) {
+          showUpdateModal(data);
+        } else {
+          showToast("发现新版本 " + remoteVersion + "，可前往检查更新", "info");
+        }
+      } else {
+        if (badgeDot) badgeDot.style.display = "none";
+        log("[UPDATE] 当前已是最新版本 (v" + currentAppVersion + ")");
+        if (!silent) {
+          showToast("当前已是最新版本 (v" + currentAppVersion + ")", "success");
+        }
+      }
+    };
 
     function showUpdateModal(data) {
       const modal = document.getElementById("updateModal");
