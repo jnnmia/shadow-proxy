@@ -29,8 +29,8 @@ ShadowProxy 是一款基于 Rust 开发的 Windows 进程级透明代理工具�
 
 | 分发形态 | 文件名 | 说明 |
 |---|---|---|
-| 独立安装包 | `ShadowProxy-Setup-v0.2.1.exe` | 单文件安装程序，一键配置桌面与开始菜单快捷方式，支持系统标准卸载 |
-| 免安装绿色包 | `ShadowProxy-v0.2.1-windows-portable.zip` | 解压即用，直接运行 `start-gui.bat` 即可启动 |
+| 独立安装包 | `ShadowProxy-Setup-v0.2.2.exe` | 单文件安装程序，一键配置桌面与开始菜单快捷方式，支持系统标准卸载 |
+| 免安装绿色包 | `ShadowProxy-v0.2.2-windows-portable.zip` | 解压即用，直接运行 `start-gui.bat` 即可启动 |
 
 ---
 
@@ -70,8 +70,8 @@ ShadowProxy 是一款基于 Rust 开发的 Windows 进程级透明代理工具�
   - 宿主程序及其派生的所有语言服务、扩展进程将自动纳入代理隧道。
 
 - **2. 对已运行进程附加代理 (Runtime Attach)**
-  - 若 Antigravity、Cursor 或 VSCode (含 Codex 插件) 已在运行，进入「进程列表」视口。
-  - 在搜索框输入目标进程名（如 `Antigravity.exe` 或 `Code.exe`），点击「附加注入」即可实时捕获后续网络流。
+  - 若 Antigravity、Cursor 或 VSCode (含 Codex 插件) 已在运行，在「进程注入」页面直接点击「附加运行中进程」。
+  - 在弹窗搜索框输入目标进程名（如 `Antigravity.exe` 或 `Code.exe`），点击「附加注入」即可在「实时监控」页观测托管进程树与后续网络流。
 
 - **3. 命令行静默启动**
   ```powershell

@@ -47,18 +47,60 @@ pub unsafe extern "system" fn DllMain(
     TRUE
 }
 
+pub fn parse_relay_state_str(content: &str) -> Option<(u16, bool)> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut parts = trimmed.split(',');
+    let port_str = parts.next()?.trim();
+    let port = port_str.parse::<u16>().ok()?;
+    if port == 0 {
+        return None;
+    }
+    let strict_dns = match parts.next().map(|s| s.trim()) {
+        Some("0") | Some("false") | Some("FALSE") => false,
+        _ => true,
+    };
+    Some((port, strict_dns))
+}
+
+fn read_shared_relay_state() -> Option<(u16, bool)> {
+    let local_appdata = std::env::var("LOCALAPPDATA").ok()?;
+    let path = std::path::Path::new(&local_appdata)
+        .join("ShadowProxy")
+        .join("relay.state");
+    let content = std::fs::read_to_string(path).ok()?;
+    parse_relay_state_str(&content)
+}
+
 fn init_env_config() {
     let port_res = std::env::var("SHADOW_RELAY_PORT").or_else(|_| std::env::var("GHOST_RELAY_PORT"));
+    let mut has_env_port = false;
     if let Ok(port_str) = port_res {
         if let Ok(port) = port_str.parse::<u16>() {
             winsock_hook::RELAY_PORT.store(port, Ordering::Relaxed);
+            has_env_port = true;
         }
     }
 
     let strict_res = std::env::var("SHADOW_STRICT_DNS").or_else(|_| std::env::var("GHOST_STRICT_DNS"));
     if let Ok(strict_str) = strict_res {
-        if strict_str == "0" || strict_str.eq_ignore_ascii_case("false") {
-            winsock_hook::STRICT_DNS.store(false, Ordering::Relaxed);
+        let strict = !(strict_str == "0" || strict_str.eq_ignore_ascii_case("false"));
+        winsock_hook::STRICT_DNS.store(strict, Ordering::Relaxed);
+    }
+
+    // 运行时动态附加 (Runtime Attach) 的进程未继承主控环境变量，回退读取共享状态文件并注入当前环境以供后续子进程继承
+    if !has_env_port {
+        if let Some((port, strict_dns)) = read_shared_relay_state() {
+            winsock_hook::RELAY_PORT.store(port, Ordering::Relaxed);
+            winsock_hook::STRICT_DNS.store(strict_dns, Ordering::Relaxed);
+            let port_str = port.to_string();
+            let dns_str = if strict_dns { "1" } else { "0" };
+            std::env::set_var("SHADOW_RELAY_PORT", &port_str);
+            std::env::set_var("GHOST_RELAY_PORT", &port_str);
+            std::env::set_var("SHADOW_STRICT_DNS", dns_str);
+            std::env::set_var("GHOST_STRICT_DNS", dns_str);
         }
     }
 }
@@ -116,6 +158,14 @@ mod tests {
         std::env::set_var("SHADOW_STRICT_DNS", "false");
         init_env_config();
         assert!(!winsock_hook::STRICT_DNS.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_parse_relay_state_str() {
+        assert_eq!(parse_relay_state_str("19090,1"), Some((19090, true)));
+        assert_eq!(parse_relay_state_str("54321,0\n"), Some((54321, false)));
+        assert_eq!(parse_relay_state_str("0,1"), None);
+        assert_eq!(parse_relay_state_str("invalid"), None);
     }
 }
 

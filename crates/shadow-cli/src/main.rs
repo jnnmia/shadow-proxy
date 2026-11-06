@@ -224,6 +224,11 @@ async fn main() -> anyhow::Result<()> {
     std::env::set_var("GHOST_RELAY_PORT", &port_str);
     std::env::set_var("SHADOW_STRICT_DNS", dns_flag);
     std::env::set_var("GHOST_STRICT_DNS", dns_flag);
+    if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+        let dir = Path::new(&appdata).join("ShadowProxy");
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("relay.state"), format!("{},{}", port_str, dns_flag));
+    }
 
     if let Some(target_exe) = args.target {
         tracing::info!("正在分析目标可执行文件: {:?}", target_exe);

@@ -881,8 +881,16 @@ impl AppState {
             return Err(format!("进程 PID {} 已在托管列表中", pid));
         }
 
+        // 若中继未启动，则自动按当前配置启动中继，确保附加进程立刻获得有效中继端口
+        if self.relay.is_none() {
+            let proxy = self.upstream_proxy.clone();
+            let dns = self.strict_dns;
+            self.start_relay(&proxy, dns)?;
+        }
+
         use windows_sys::Win32::System::Threading::{
-            OpenProcess, IsWow64Process, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE
+            OpenProcess, IsWow64Process, QueryFullProcessImageNameW,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
         };
         let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if h.is_null() {
@@ -891,7 +899,16 @@ impl AppState {
 
         let mut is_wow64: windows_sys::Win32::Foundation::BOOL = 0;
         let ok = unsafe { IsWow64Process(h, &mut is_wow64) };
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(h) };
+
+        let mut exe_path_str = String::new();
+        let mut path_buf = [0u16; 1024];
+        let mut path_len = path_buf.len() as u32;
+        unsafe {
+            if QueryFullProcessImageNameW(h, 0, path_buf.as_mut_ptr(), &mut path_len) != 0 && path_len > 0 {
+                exe_path_str = String::from_utf16_lossy(&path_buf[..path_len as usize]);
+            }
+            windows_sys::Win32::Foundation::CloseHandle(h);
+        }
         if ok == 0 {
             return Err(format!("查询进程 PID {} 架构失败", pid));
         }
@@ -909,12 +926,18 @@ impl AppState {
         inject_existing_pid(pid, &dll_path)
             .map_err(|e| format!("向进程 PID {} 附加注入失败: {}", pid, e))?;
 
-        // 获取进程名
+        // 获取进程名与图标
         let proc_name = list_system_processes()
             .into_iter()
             .find(|p| p.pid == pid)
             .map(|p| p.name)
             .unwrap_or_else(|| format!("PID:{}", pid));
+
+        let icon = if !exe_path_str.is_empty() {
+            icon_extractor::extract_icon_as_base64_png(&exe_path_str)
+        } else {
+            None
+        };
 
         let handle = unsafe {
             OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, 0, pid)
@@ -924,12 +947,12 @@ impl AppState {
             pid,
             parent_pid: None,
             name: proc_name.clone(),
-            path: "".to_string(),
+            path: if exe_path_str.is_empty() { proc_name.clone() } else { exe_path_str },
             arch: format!("{:?}", arch),
             handle,
             running: true,
             exit_code: 0,
-            icon: None,
+            icon,
         });
 
         self.last_log = Some(format!("[INJECT] 成功附加到运行中进程 [{}] (PID: {})", proc_name, pid));
@@ -2121,6 +2144,21 @@ fn run_app() -> anyhow::Result<()> {
                             }
                             IpcCommand::WindowReady => {
                                 window.set_visible(true);
+                                if !has_auto_started_relay {
+                                    has_auto_started_relay = true;
+                                    if state.relay.is_none() {
+                                        let p = state.upstream_proxy.clone();
+                                        let d = state.strict_dns;
+                                        let _ = state.start_relay(&p, d);
+                                        let full = state.get_full_state();
+                                        if let Ok(json) = serde_json::to_string(&full) {
+                                            let _ = webview.evaluate_script(&format!(
+                                                "window.updateState({});",
+                                                json
+                                            ));
+                                        }
+                                    }
+                                }
                             }
                             IpcCommand::OpenUrl { url } => {
                                 let clean = url.trim().to_string();

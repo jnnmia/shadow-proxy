@@ -29,8 +29,8 @@ Download the latest version from [GitHub Releases](https://github.com/jnnmia/sha
 
 | Package | Filename | Description |
 |---|---|---|
-| Installer | `ShadowProxy-Setup-v0.2.1.exe` | Standalone setup wizard; configures Desktop/Start Menu shortcuts and uninstaller |
-| Portable | `ShadowProxy-v0.2.1-windows-portable.zip` | Standalone archive; extract and double-click `start-gui.bat` to run |
+| Installer | `ShadowProxy-Setup-v0.2.2.exe` | Standalone setup wizard; configures Desktop/Start Menu shortcuts and uninstaller |
+| Portable | `ShadowProxy-v0.2.2-windows-portable.zip` | Standalone archive; extract and double-click `start-gui.bat` to run |
 
 ---
 
@@ -70,8 +70,8 @@ Download the latest version from [GitHub Releases](https://github.com/jnnmia/sha
   - Click "Launch with Proxy"; Antigravity and all spawned worker processes will immediately route through the relay.
 
 - **2. Attach to Running Processes (Runtime Attach)**
-  - If Antigravity, Cursor, or VSCode (with Codex extensions) is already running, switch to the "Processes" tab.
-  - Filter for `Antigravity.exe` or `Code.exe` in the search box, then click "Attach" to intercept live network sockets.
+  - If Antigravity, Cursor, or VSCode (with Codex extensions) is already running, click "Attach Running Process" directly on the "Process Injection" view.
+  - Filter for `Antigravity.exe` or `Code.exe` in the search box, then click "Attach" to monitor the managed process tree and live network sockets in the unified "Real-Time Monitor" view.
 
 - **3. Command Line Launch**
   ```powershell

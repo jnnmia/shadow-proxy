@@ -873,6 +873,85 @@
       color: #ffffff;
     }
 
+    /* 监控页：托管进程与连接联动样式 */
+    .monitor-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+
+    .monitor-section-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: 0.3px;
+    }
+
+    .monitor-hint {
+      font-size: 11px;
+      color: var(--text-subtle);
+      font-weight: 400;
+    }
+
+    .proc-row-selectable {
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .proc-row-selectable.active-filter td {
+      background: rgba(57, 197, 187, 0.14) !important;
+      border-bottom-color: rgba(57, 197, 187, 0.28);
+    }
+
+    .proc-row-selectable.active-filter td:first-child {
+      box-shadow: inset 3px 0 0 var(--cyan-neon);
+    }
+
+    .badge-conn-count {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-size: 10.5px;
+      font-family: var(--code-font);
+      background: rgba(139, 148, 158, 0.1);
+      color: var(--text-subtle);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .badge-conn-count.has-conns {
+      background: var(--cyan-dim);
+      color: var(--cyan-neon);
+      border-color: rgba(57, 197, 187, 0.3);
+      font-weight: 600;
+    }
+
+    .proc-filter-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 9px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--cyan-dim);
+      color: var(--cyan-neon);
+      border: 1px solid rgba(57, 197, 187, 0.4);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .proc-filter-chip:hover {
+      background: rgba(57, 197, 187, 0.22);
+      border-color: var(--cyan-neon);
+    }
+
     /* 底部通用日志栏 */
     footer {
       padding: 7px 18px;
@@ -1277,7 +1356,7 @@
         <div class="nav-item" data-view="view-connections" onclick="switchNav('view-connections')">
           <div class="nav-item-left">
             <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-            <span class="nav-item-title">实时连接</span>
+            <span class="nav-item-title">实时监控</span>
           </div>
           <span id="navConnBadge" class="nav-badge">0</span>
         </div>
@@ -1288,14 +1367,6 @@
             <span class="nav-item-title">常用快捷</span>
           </div>
           <span id="navPresetBadge" class="nav-badge">0</span>
-        </div>
-
-        <div class="nav-item" data-view="view-procs" onclick="switchNav('view-procs')">
-          <div class="nav-item-left">
-            <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
-            <span class="nav-item-title">进程看板</span>
-          </div>
-          <span id="navProcBadge" class="nav-badge">0</span>
         </div>
 
         <div class="nav-label" style="margin-top: 6px;">网络配置</div>
@@ -1318,7 +1389,7 @@
 
       <!-- 侧边栏底部遥测 -->
       <div class="sidebar-hud">
-        <div id="relayStatusChip" class="relay-status-chip">
+        <div id="relayStatusChip" class="relay-status-chip" onclick="toggleRelay()" title="点击一键启动/停止本地透明中继服务">
           <span>中继服务</span>
           <div style="display: flex; align-items: center; gap: 6px;">
             <span id="relayStatusText">OFFLINE</span>
@@ -1349,7 +1420,7 @@
 
         <div class="sidebar-version-bar">
           <div class="version-meta">
-            <span class="version-tag" id="sidebarVersionTag">v0.2.1</span>
+            <span class="version-tag" id="sidebarVersionTag">v0.2.2</span>
             <span id="updateBadgeDot" class="update-badge-dot" style="display: none;" title="发现新版本"></span>
           </div>
           <button id="btnCheckUpdate" class="btn-check-update" onclick="checkUpdate(false)" title="检查 GitHub 最新发布版本">
@@ -1370,9 +1441,13 @@
         <div class="view-header">
           <div class="view-title-group">
             <h1 class="view-title">目标进程注入代理</h1>
-            <p class="view-desc">支持双架构识别、子进程树全链路挂钩、IOCP 异步套接字拦截与 Fake-IP 映射</p>
+            <p class="view-desc">支持挂起冷启动注入、运行中进程动态附加、子进程树全链路挂钩与 Fake-IP 映射</p>
           </div>
           <div style="display: flex; gap: 8px;">
+            <button type="button" class="btn-secondary" onclick="openAttachModal()" title="从当前系统运行中进程选取目标并动态注入 Hook DLL">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-neon)" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              <span>附加运行中进程</span>
+            </button>
             <button type="button" class="btn-secondary" onclick="runQuickTest()" title="运行 curl.exe 访问 api.ipify.org 验证透明代理连通性">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-neon)" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
               <span>快速测速 (curl)</span>
@@ -1396,7 +1471,7 @@
           <div class="form-row">
             <span class="form-label">可执行文件目标路径</span>
             <div class="input-with-action">
-              <input type="text" id="targetPath" value="C:\Users\Jnnmi\AppData\Local\Programs\antigravity\Antigravity.exe" placeholder="C:\Windows\System32\cmd.exe" />
+              <input type="text" id="targetPath" value="" placeholder="如: Antigravity.exe、C:\Windows\System32\cmd.exe 或拖入快捷方式" oninput="hasUserEditedTarget = true;" onkeydown="if(event.key==='Enter')launchProcess()" />
               <button type="button" class="btn-secondary" onclick="browseFile()" title="浏览本地程序或快捷方式">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                 <span>浏览...</span>
@@ -1406,13 +1481,17 @@
 
           <div class="form-row">
             <span class="form-label">启动命令行参数 (可选)</span>
-            <input type="text" id="targetArgs" value="--no-proxy-server" placeholder="如 --no-proxy-server 或 /k ping 1.1.1.1" />
+            <input type="text" id="targetArgs" value="--no-proxy-server" placeholder="如 --no-proxy-server 或 /k ping 1.1.1.1" oninput="hasUserEditedTarget = true;" onkeydown="if(event.key==='Enter')launchProcess()" />
           </div>
 
           <div style="display: flex; gap: 8px; margin-top: 4px;">
             <button id="btnLaunch" class="btn-cta" style="flex: 1;" onclick="launchProcess()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
               <span id="btnLaunchText">启动并注入代理</span>
+            </button>
+            <button type="button" class="btn-secondary" onclick="openAttachModal()" title="对已运行的程序动态附加注入代理">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              <span>附加运行中进程</span>
             </button>
             <button type="button" class="btn-secondary" onclick="manualSavePreset()" title="将当前路径与参数存入快捷预设">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
@@ -1422,7 +1501,7 @@
 
           <div style="font-size: 11px; color: var(--text-subtle); display: flex; align-items: center; gap: 6px; margin-top: 2px;">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-            <span>提示: 注入器启动时会自动清理 HTTP_PROXY/ALL_PROXY 旁路；子进程树扫描器每秒自动捕获并纳管新衍生的子进程。</span>
+            <span>提示: 注入器启动时会自动清理 HTTP_PROXY/ALL_PROXY 旁路；若目标程序已在运行，可直接点击“附加运行中进程”。</span>
           </div>
         </div>
       </section>
@@ -1445,89 +1524,102 @@
         </div>
       </section>
 
-      <!-- 视图 3: 进程看板 -->
-      <section id="view-procs" class="view-pane">
-        <div class="view-header">
-          <div class="view-title-group">
-            <h1 class="view-title">进程看板与子进程树</h1>
-            <p class="view-desc">全量感知主进程及其派生子进程（如 language_server、NetworkService 等）的运行生命周期</p>
-          </div>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <button type="button" class="btn-secondary" onclick="openAttachModal()" style="padding: 4px 10px; font-size: 11px;">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-              <span>附加运行中进程</span>
-            </button>
-            <div class="nav-badge" id="procSummaryBadge" style="padding: 4px 10px; font-size: 11px;">
-              0 个活动进程
-            </div>
-          </div>
-        </div>
-
-        <div class="table-viewport">
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 80px;">PID</th>
-                <th>程序名称与路径</th>
-                <th style="width: 70px;">架构</th>
-                <th style="width: 110px;">状态</th>
-                <th style="width: 70px; text-align: center;">操作</th>
-              </tr>
-            </thead>
-            <tbody id="procTableBody">
-              <tr>
-                <td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
-                  暂无托管进程。进入“进程注入”或“常用快捷”启动目标程序。
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- 视图: 实时连接会话监控 -->
+      <!-- 视图: 实时监控 (托管进程树 + 连接会话明细) -->
       <section id="view-connections" class="view-pane">
         <div class="view-header">
           <div class="view-title-group">
-            <h1 class="view-title">实时连接会话监控</h1>
-            <p class="view-desc">被注入进程发起的全部网络连接遥测、规则决策判定与流量统计</p>
+            <h1 class="view-title">实时监控 (托管进程与连接明细)</h1>
+            <p class="view-desc">统一感知托管进程树生命周期与实时网络连接遥测，点击任意进程行即可过滤其关联网络流</p>
           </div>
           <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-            <input type="text" id="connSearchInput" placeholder="实时过滤目标/规则/进程..." style="height: 28px; width: 175px; font-size: 11.5px; padding: 2px 8px;" oninput="onConnSearchInput()" />
-            <div class="filter-group">
-              <button class="btn-filter active" id="filterAll" onclick="setSessionFilter('all')">全部 (<span id="countConnAll">0</span>)</button>
-              <button class="btn-filter" id="filterProxy" onclick="setSessionFilter('proxy')">代理 (<span id="countConnProxy">0</span>)</button>
-              <button class="btn-filter" id="filterDirect" onclick="setSessionFilter('direct')">直连 (<span id="countConnDirect">0</span>)</button>
-              <button class="btn-filter" id="filterBlock" onclick="setSessionFilter('block')">阻断 (<span id="countConnBlock">0</span>)</button>
-            </div>
             <button type="button" class="btn-secondary" onclick="exportSessionsCsv()" style="padding: 4px 10px; font-size: 11px;">导出 CSV</button>
             <button type="button" class="btn-secondary" onclick="clearSessions()" style="padding: 4px 10px; font-size: 11px;">清空历史</button>
           </div>
         </div>
 
-        <div class="table-viewport">
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 75px;">时间</th>
-                <th style="width: 120px;">发起进程</th>
-                <th>目标地址</th>
-                <th>命中规则</th>
-                <th style="width: 80px;">分流决策</th>
-                <th style="width: 80px;">传输状态</th>
-                <th style="width: 75px;">上传</th>
-                <th style="width: 75px;">下载</th>
-                <th style="width: 65px; text-align: right;">耗时</th>
-              </tr>
-            </thead>
-            <tbody id="connTableBody">
-              <tr>
-                <td colspan="9" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
-                  暂无捕获连接。启动透明代理并运行目标程序后在此实时滚屏。
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <!-- 上半区: 托管进程与子进程树 -->
+        <div>
+          <div class="monitor-section-header">
+            <div class="monitor-section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-neon)" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+              <span>托管进程与子进程树</span>
+              <span class="nav-badge" id="procSummaryBadge" style="padding: 2px 8px; font-size: 10.5px;">0 / 0 个进程运行中</span>
+              <span id="navProcBadge" style="display: none;">0</span>
+              <span class="monitor-hint">（点击进程行可按该进程过滤下方连接）</span>
+            </div>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <button type="button" class="btn-secondary" id="btnToggleProcPanel" onclick="toggleProcPanel()" style="padding: 3px 9px; font-size: 11px;">
+                收起进程列表
+              </button>
+            </div>
+          </div>
+
+          <div id="procPanelContainer" class="table-viewport" style="max-height: 195px; overflow-y: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 75px;">PID</th>
+                  <th>程序名称与路径</th>
+                  <th style="width: 85px;">关联连接</th>
+                  <th style="width: 65px;">架构</th>
+                  <th style="width: 105px;">状态</th>
+                  <th style="width: 70px; text-align: center;">操作</th>
+                </tr>
+              </thead>
+              <tbody id="procTableBody">
+                <tr>
+                  <td colspan="6" style="text-align: center; color: var(--text-subtle); padding: 24px 12px;">
+                    暂无托管进程。进入“进程注入”或“常用快捷”启动或附加目标程序。
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 下半区: 实时连接会话监控 -->
+        <div>
+          <div class="monitor-section-header">
+            <div class="monitor-section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-neon)" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+              <span>实时连接会话明细</span>
+              <span id="activeProcFilterChip" class="proc-filter-chip" style="display: none;" onclick="clearProcessFilter()" title="点击取消按进程过滤"></span>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <input type="text" id="connSearchInput" placeholder="实时过滤目标/规则/进程..." style="height: 28px; width: 175px; font-size: 11.5px; padding: 2px 8px;" oninput="onConnSearchInput()" />
+              <div class="filter-group">
+                <button class="btn-filter active" id="filterAll" onclick="setSessionFilter('all')">全部 (<span id="countConnAll">0</span>)</button>
+                <button class="btn-filter" id="filterProxy" onclick="setSessionFilter('proxy')">代理 (<span id="countConnProxy">0</span>)</button>
+                <button class="btn-filter" id="filterDirect" onclick="setSessionFilter('direct')">直连 (<span id="countConnDirect">0</span>)</button>
+                <button class="btn-filter" id="filterBlock" onclick="setSessionFilter('block')">阻断 (<span id="countConnBlock">0</span>)</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-viewport">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 75px;">时间</th>
+                  <th style="width: 120px;">发起进程</th>
+                  <th>目标地址 (点击可复制 / +规则)</th>
+                  <th>命中规则</th>
+                  <th style="width: 80px;">分流决策</th>
+                  <th style="width: 80px;">传输状态</th>
+                  <th style="width: 75px;">上传</th>
+                  <th style="width: 75px;">下载</th>
+                  <th style="width: 65px; text-align: right;">耗时</th>
+                </tr>
+              </thead>
+              <tbody id="connTableBody">
+                <tr>
+                  <td colspan="9" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
+                    暂无捕获连接。启动透明代理并运行目标程序后在此实时滚屏。
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -1536,7 +1628,7 @@
         <div class="view-header">
           <div class="view-title-group">
             <h1 class="view-title">多条件分流规则引擎</h1>
-            <p class="view-desc">支持基于域名后缀/关键词/全等、IPv4-CIDR 及端口范围自定义分流策略</p>
+            <p class="view-desc">支持基于域名后缀/关键词/全等、IPv4-CIDR、端口范围及发起进程名自定义分流策略</p>
           </div>
           <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
             <button type="button" class="btn-secondary" onclick="setPreset('smart')" style="padding: 4px 9px; font-size: 11px;">智能分流</button>
@@ -1556,8 +1648,8 @@
             添加分流规则
           </div>
           <div class="rule-form-row">
-            <input type="text" id="newRuleName" placeholder="规则名称 (如: 代理 GitHub)" style="flex: 1.2; min-width: 140px;" />
-            <select id="newRuleType" style="flex: 1.2; min-width: 150px;">
+            <input type="text" id="newRuleName" placeholder="规则名称 (如: 代理 GitHub)" style="flex: 1.2; min-width: 140px;" onkeydown="if(event.key==='Enter')submitAddRule()" />
+            <select id="newRuleType" style="flex: 1.2; min-width: 150px;" onchange="onRuleTypeChange()">
               <option value="domain_suffix">域名后缀 (如: cn, baidu.com)</option>
               <option value="domain_keyword">域名关键词 (如: google, github)</option>
               <option value="domain_exact">域名全等</option>
@@ -1566,7 +1658,7 @@
               <option value="port_range">目标端口范围 (如: 8000-9000)</option>
               <option value="process_name">发起进程名 (如: chrome.exe, curl.exe)</option>
             </select>
-            <input type="text" id="newRuleVal" placeholder="匹配表达式" style="flex: 1.5; min-width: 140px;" />
+            <input type="text" id="newRuleVal" placeholder="如: google.com, github.com" style="flex: 1.5; min-width: 140px;" onkeydown="if(event.key==='Enter')submitAddRule()" />
             <select id="newRuleAction" style="flex: 1; min-width: 110px;">
               <option value="proxy">走代理 (PROXY)</option>
               <option value="direct">本地直连 (DIRECT)</option>
@@ -1690,7 +1782,7 @@
           </div>
           <div>
             <div class="modal-title" id="updateModalTitle">发现新版本 v0.0.0</div>
-            <div class="modal-subtitle" id="updateModalSubtitle">当前版本: v0.2.1</div>
+            <div class="modal-subtitle" id="updateModalSubtitle">当前版本: v0.2.2</div>
           </div>
         </div>
         <button type="button" class="btn-text" onclick="closeUpdateModal()" style="font-size: 16px; color: var(--text-muted); cursor: pointer;">&times;</button>
@@ -1720,15 +1812,19 @@
           </div>
           <div>
             <div class="modal-title">附加注入到运行中进程</div>
-            <div class="modal-subtitle">从当前系统活动进程中选取目标并注入 Hook DLL</div>
+            <div class="modal-subtitle">从当前系统活动进程中选取目标并注入 Hook DLL (推荐应用已自动置顶)</div>
           </div>
         </div>
         <button type="button" class="btn-text" onclick="closeAttachModal()" style="font-size: 16px; color: var(--text-muted); cursor: pointer;">&times;</button>
       </div>
       <div class="modal-body" style="padding: 14px 20px;">
-        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-          <input type="text" id="attachProcSearch" placeholder="搜索进程名或 PID (如: chrome, 1234)..." oninput="filterSystemProcesses()" style="flex: 1;" />
-          <button type="button" class="btn-secondary" onclick="refreshSystemProcesses()" style="padding: 0 12px; font-size: 12px;">刷新列表</button>
+        <div style="display: flex; gap: 8px; margin-bottom: 10px; align-items: center;">
+          <input type="text" id="attachProcSearch" placeholder="搜索进程名或 PID (如: Antigravity, Code, chrome)..." oninput="filterSystemProcesses()" style="flex: 1;" />
+          <label style="display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-muted); cursor: pointer; white-space: nowrap;">
+            <input type="checkbox" id="hideSystemNoiseProcs" checked onchange="filterSystemProcesses()" style="accent-color: var(--cyan-neon); cursor: pointer;" />
+            <span>隐藏系统服务</span>
+          </label>
+          <button type="button" class="btn-secondary" onclick="refreshSystemProcesses()" style="padding: 0 12px; height: 30px; font-size: 12px;">刷新</button>
         </div>
         <div class="table-viewport" style="max-height: 280px; overflow-y: auto;">
           <table>
@@ -1736,7 +1832,7 @@
               <tr>
                 <th style="width: 80px;">PID</th>
                 <th>进程名</th>
-                <th style="width: 80px; text-align: center;">操作</th>
+                <th style="width: 90px; text-align: center;">操作</th>
               </tr>
             </thead>
             <tbody id="attachProcTableBody">
@@ -1805,10 +1901,50 @@
     let lastBytesReceived = 0;
     let currentSessionFilter = 'all';
     let currentSessions = [];
+    let currentProcesses = [];
     let currentRules = [];
     let connSearchKeyword = "";
+    let selectedProcessPid = null;
+    let selectedProcessName = "";
+    let isProcPanelCollapsed = false;
     let allSystemProcesses = [];
     let pendingBrowseTarget = null;
+    let hasUserEditedTarget = false;
+    let lastNotifiedLog = "";
+
+    const SYSTEM_NOISE_PROCS = new Set([
+      "system", "idle", "registry", "smss.exe", "csrss.exe", "wininit.exe",
+      "services.exe", "lsass.exe", "svchost.exe", "fontdrvhost.exe", "winlogon.exe",
+      "dwm.exe", "conhost.exe", "runtimebroker.exe", "sihost.exe", "taskhostw.exe",
+      "dllhost.exe", "spoolsv.exe", "searchindexer.exe", "searchhost.exe",
+      "startmenuexperiencehost.exe", "shellexperiencehost.exe", "ctfmon.exe",
+      "audiodg.exe", "dashost.exe", "wmiprvse.exe", "WmiPrvSE.exe",
+      "securityhealthservice.exe", "securityhealthsystray.exe", "msmpeng.exe",
+      "nissrv.exe", "aggregatorhost.exe", "TextInputHost.exe", "textinputhost.exe",
+      "widgetservice.exe", "widgets.exe", "LockApp.exe", "lockapp.exe",
+      "ApplicationFrameHost.exe", "applicationframehost.exe", "smartscreen.exe",
+      " MoUsoCoreWorker.exe", "mousocoreworker.exe", "sppsvc.exe", "unsecapp.exe"
+    ]);
+
+    const RECOMMENDED_USER_APPS = [
+      "antigravity", "cursor", "windsurf", "code", "zed",
+      "idea", "pycharm", "webstorm", "goland", "clion", "rider", "rustrover", "devenv",
+      "chrome", "msedge", "firefox", "brave", "arc", "vivaldi",
+      "python", "node", "bun", "deno", "cargo", "go", "git", "curl", "wget",
+      "powershell", "pwsh", "cmd", "windowsterminal", "wezterm", "alacritty",
+      "telegram", "discord", "slack", "notion", "obsidian", "steam"
+    ];
+
+    function isRecommendedUserApp(procName) {
+      const lower = (procName || "").toLowerCase();
+      return RECOMMENDED_USER_APPS.some(k => lower === k || lower === k + ".exe" || lower.includes(k));
+    }
+
+    function isSystemNoiseProc(procName, pid) {
+      if (pid <= 4) return true;
+      const lower = (procName || "").toLowerCase();
+      return SYSTEM_NOISE_PROCS.has(lower) || lower === "shadow-gui.exe" || lower === "shadow-cli.exe";
+    }
 
     function sendIpc(cmd, payload = {}) {
       const msg = JSON.stringify({ cmd, ...payload });
@@ -1841,12 +1977,87 @@
 
     /* 视图切换 */
     function switchNav(viewId) {
+      const targetView = viewId === "view-procs" ? "view-connections" : viewId;
       document.querySelectorAll(".nav-item").forEach(el => {
-        el.classList.toggle("active", el.dataset.view === viewId);
+        el.classList.toggle("active", el.dataset.view === targetView);
       });
       document.querySelectorAll(".view-pane").forEach(el => {
-        el.classList.toggle("active", el.id === viewId);
+        el.classList.toggle("active", el.id === targetView);
       });
+    }
+
+    function toggleProcPanel() {
+      isProcPanelCollapsed = !isProcPanelCollapsed;
+      const container = document.getElementById("procPanelContainer");
+      const btn = document.getElementById("btnToggleProcPanel");
+      if (container) {
+        container.style.display = isProcPanelCollapsed ? "none" : "block";
+      }
+      if (btn) {
+        btn.innerText = isProcPanelCollapsed ? "展开进程列表" : "收起进程列表";
+      }
+    }
+
+    function toggleProcessFilter(pid, name) {
+      const numPid = Number(pid);
+      if (!numPid) return;
+      if (selectedProcessPid === numPid) {
+        selectedProcessPid = null;
+        selectedProcessName = "";
+      } else {
+        selectedProcessPid = numPid;
+        selectedProcessName = name || ("PID:" + numPid);
+      }
+      renderProcesses(currentProcesses);
+      renderSessions();
+    }
+
+    function clearProcessFilter() {
+      selectedProcessPid = null;
+      selectedProcessName = "";
+      renderProcesses(currentProcesses);
+      renderSessions();
+    }
+
+    function copyTargetAddress(target, event) {
+      if (event) event.stopPropagation();
+      if (!target) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(target).then(() => {
+          showToast("已复制目标地址: " + target, "success");
+        }).catch(() => {
+          showToast("复制失败，请手动选择", "error");
+        });
+      }
+    }
+
+    function quickRuleFromSession(target, procName, event) {
+      if (event) event.stopPropagation();
+      if (!target) return;
+      const hostPart = target.includes(":") ? target.split(":")[0] : target;
+      const isIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostPart);
+
+      const nameInput = document.getElementById("newRuleName");
+      const typeInput = document.getElementById("newRuleType");
+      const valInput = document.getElementById("newRuleVal");
+
+      if (typeInput && valInput && nameInput) {
+        if (isIpv4) {
+          typeInput.value = "ip_cidr";
+          valInput.value = hostPart + "/32";
+          nameInput.value = "IP " + hostPart;
+        } else {
+          const parts = hostPart.split(".");
+          const suffix = parts.length > 2 ? parts.slice(-2).join(".") : hostPart;
+          typeInput.value = "domain_suffix";
+          valInput.value = suffix;
+          nameInput.value = suffix + " 分流";
+        }
+        onRuleTypeChange();
+      }
+      switchNav("view-rules");
+      flashInput(valInput);
+      showToast("已根据目标连接预填规则，确认分流动作后点击「+ 添加规则」生效", "info");
     }
 
     function toggleRelay() {
@@ -1937,6 +2148,7 @@
     function clearSessions() {
       sendIpc("clear_sessions");
       currentSessions = [];
+      renderProcesses(currentProcesses);
       renderSessions();
     }
 
@@ -1944,10 +2156,25 @@
       const tbody = document.getElementById("connTableBody");
       if (!tbody) return;
 
-      const totalAll = currentSessions.length;
-      const totalProxy = currentSessions.filter(s => s.action.toLowerCase() === 'proxy').length;
-      const totalDirect = currentSessions.filter(s => s.action.toLowerCase() === 'direct').length;
-      const totalBlock = currentSessions.filter(s => s.action.toLowerCase() === 'block').length;
+      const filterChip = document.getElementById("activeProcFilterChip");
+      if (filterChip) {
+        if (selectedProcessPid !== null) {
+          filterChip.style.display = "inline-flex";
+          filterChip.innerText = `进程过滤: ${selectedProcessName} (${selectedProcessPid}) ×`;
+        } else {
+          filterChip.style.display = "none";
+          filterChip.innerText = "";
+        }
+      }
+
+      const procScopedSessions = selectedProcessPid !== null
+        ? currentSessions.filter(s => s.pid === selectedProcessPid)
+        : currentSessions;
+
+      const totalAll = procScopedSessions.length;
+      const totalProxy = procScopedSessions.filter(s => s.action.toLowerCase() === 'proxy').length;
+      const totalDirect = procScopedSessions.filter(s => s.action.toLowerCase() === 'direct').length;
+      const totalBlock = procScopedSessions.filter(s => s.action.toLowerCase() === 'block').length;
 
       const cAll = document.getElementById("countConnAll");
       const cProxy = document.getElementById("countConnProxy");
@@ -1959,9 +2186,9 @@
       if (cProxy) cProxy.innerText = totalProxy;
       if (cDirect) cDirect.innerText = totalDirect;
       if (cBlock) cBlock.innerText = totalBlock;
-      if (navBadge) navBadge.innerText = totalAll;
+      if (navBadge) navBadge.innerText = currentSessions.length;
 
-      const filtered = currentSessions.filter(s => {
+      const filtered = procScopedSessions.filter(s => {
         if (currentSessionFilter !== 'all' && s.action.toLowerCase() !== currentSessionFilter) {
           return false;
         }
@@ -1979,7 +2206,7 @@
         tbody.innerHTML = `
           <tr>
             <td colspan="9" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
-              ${totalAll === 0 ? "暂无捕获连接。启动透明代理并运行目标程序后在此实时滚屏。" : "该分类或搜索条件下暂无活动连接。"}
+              ${currentSessions.length === 0 ? "暂无捕获连接。启动透明代理并运行目标程序后在此实时滚屏。" : "该进程、分类或搜索条件下暂无活动连接。"}
             </td>
           </tr>
         `;
@@ -1992,12 +2219,21 @@
         const statLower = s.status.toLowerCase();
         const durationSec = ((s.duration_ms || 0) / 1000).toFixed(1);
         const procDisplay = s.process_name ? `${escapeHtml(s.process_name)}${s.pid ? ` (${s.pid})` : ''}` : '-';
+        const hasPid = typeof s.pid === 'number' && s.pid > 0;
+        const procCellStyle = hasPid
+          ? "color: var(--cyan-neon); font-size: 11.5px; font-weight: 500; cursor: pointer;"
+          : "color: var(--text-primary); font-size: 11.5px; font-weight: 500;";
 
         html += `
           <tr>
             <td style="font-family: var(--code-font); color: var(--text-muted);">${s.time_str || '-'}</td>
-            <td style="color: var(--text-primary); font-size: 11.5px; font-weight: 500;" title="${escapeHtml(s.process_name || '')}">${procDisplay}</td>
-            <td style="font-weight: 600; color: var(--text-primary);" title="${escapeHtml(s.target)}">${escapeHtml(s.target)}</td>
+            <td style="${procCellStyle}" data-pid="${s.pid || 0}" data-proc-name="${escapeHtml(s.process_name || '')}" onclick="if(Number(this.dataset.pid)>0) toggleProcessFilter(Number(this.dataset.pid), this.dataset.procName)" title="${hasPid ? '点击按该进程过滤连接' : escapeHtml(s.process_name || '')}">${procDisplay}</td>
+            <td style="font-weight: 600; color: var(--text-primary);">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;" data-target="${escapeHtml(s.target || '')}" onclick="copyTargetAddress(this.dataset.target, event)" title="点击复制目标地址: ${escapeHtml(s.target || '')}">${escapeHtml(s.target)}</span>
+                <button type="button" class="btn-icon-tiny" style="flex-shrink: 0; font-size: 10px; padding: 1px 5px;" data-target="${escapeHtml(s.target || '')}" data-proc="${escapeHtml(s.process_name || '')}" onclick="quickRuleFromSession(this.dataset.target, this.dataset.proc, event)" title="根据此目标快速创建分流规则">+规则</button>
+              </div>
+            </td>
             <td style="color: var(--text-muted); font-size: 11.5px;">${escapeHtml(s.rule_name || '-')}</td>
             <td><span class="badge-action badge-action-${actLower}">${s.action}</span></td>
             <td><span class="badge-status badge-status-${statLower}">${s.status}</span></td>
@@ -2134,6 +2370,10 @@
       const modal = document.getElementById("attachModal");
       if (modal) modal.style.display = "flex";
       refreshSystemProcesses();
+      setTimeout(() => {
+        const searchInput = document.getElementById("attachProcSearch");
+        if (searchInput) searchInput.focus();
+      }, 60);
     }
 
     function closeAttachModal() {
@@ -2162,18 +2402,41 @@
       const tbody = document.getElementById("attachProcTableBody");
       if (!tbody) return;
       const searchInput = document.getElementById("attachProcSearch");
+      const hideSysCheckbox = document.getElementById("hideSystemNoiseProcs");
       const kw = searchInput ? searchInput.value.trim().toLowerCase() : "";
+      const hideSys = hideSysCheckbox ? hideSysCheckbox.checked : true;
+
+      const managedPidSet = new Set(
+        (currentProcesses || []).filter(mp => mp.running).map(mp => mp.pid)
+      );
 
       const filtered = allSystemProcesses.filter(p => {
-        if (!kw) return true;
-        return (p.name || "").toLowerCase().includes(kw) || String(p.pid).includes(kw);
+        if (kw) {
+          return (p.name || "").toLowerCase().includes(kw) || String(p.pid).includes(kw);
+        }
+        if (hideSys && isSystemNoiseProc(p.name, p.pid)) {
+          return false;
+        }
+        return true;
+      });
+
+      filtered.sort((a, b) => {
+        const aManaged = managedPidSet.has(a.pid) ? 1 : 0;
+        const bManaged = managedPidSet.has(b.pid) ? 1 : 0;
+        if (aManaged !== bManaged) return bManaged - aManaged;
+
+        const aRec = isRecommendedUserApp(a.name) ? 1 : 0;
+        const bRec = isRecommendedUserApp(b.name) ? 1 : 0;
+        if (aRec !== bRec) return bRec - aRec;
+
+        return (a.name || "").localeCompare(b.name || "");
       });
 
       if (filtered.length === 0) {
         tbody.innerHTML = `
           <tr>
             <td colspan="3" style="text-align: center; color: var(--text-subtle); padding: 30px 12px;">
-              ${allSystemProcesses.length === 0 ? "未检索到系统进程" : "无匹配进程"}
+              ${allSystemProcesses.length === 0 ? "未检索到系统进程" : "无匹配进程（可取消勾选“隐藏系统服务”查看更多）"}
             </td>
           </tr>
         `;
@@ -2182,13 +2445,20 @@
 
       let html = "";
       for (const p of filtered) {
+        const isManaged = managedPidSet.has(p.pid);
+        const isRec = isRecommendedUserApp(p.name);
+        const recBadge = isRec
+          ? `<span style="font-size: 10px; color: var(--cyan-neon); background: rgba(57, 197, 187, 0.12); border: 1px solid rgba(57, 197, 187, 0.3); padding: 1px 5px; border-radius: 3px; margin-left: 6px; font-weight: 500;">常用应用</span>`
+          : "";
+        const actionCell = isManaged
+          ? `<span style="font-size: 11px; color: var(--green-live); font-weight: 600;">✓ 已托管</span>`
+          : `<button class="btn-primary" style="padding: 3px 8px; font-size: 11px;" onclick="attachTargetProcess(${p.pid})">附加注入</button>`;
+
         html += `
           <tr>
             <td style="font-family: var(--code-font);">${p.pid}</td>
-            <td style="font-weight: 600; color: var(--text-primary);">${escapeHtml(p.name)}</td>
-            <td style="text-align: center;">
-              <button class="btn-primary" style="padding: 3px 8px; font-size: 11px;" onclick="attachTargetProcess(${p.pid})">附加注入</button>
-            </td>
+            <td style="font-weight: 600; color: var(--text-primary);">${escapeHtml(p.name)}${recBadge}</td>
+            <td style="text-align: center;">${actionCell}</td>
           </tr>
         `;
       }
@@ -2198,7 +2468,66 @@
     function attachTargetProcess(pid) {
       sendIpc("attach_process", { pid });
       closeAttachModal();
+      switchNav("view-connections");
       showToast("已向 PID " + pid + " 发送附加注入请求", "info");
+    }
+
+    function renderProcesses(procs = currentProcesses) {
+      const tbody = document.getElementById("procTableBody");
+      const procBadge = document.getElementById("navProcBadge");
+      const procSummaryBadge = document.getElementById("procSummaryBadge");
+
+      const runningCount = procs.filter(p => p.running).length;
+      if (procBadge) procBadge.innerText = runningCount;
+      if (procSummaryBadge) procSummaryBadge.innerText = `${runningCount} / ${procs.length} 个进程运行中`;
+
+      if (!tbody) return;
+
+      if (procs.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" style="text-align: center; color: var(--text-subtle); padding: 24px 12px;">
+              暂无托管进程。进入“进程注入”或“常用快捷”启动或附加目标程序。
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      let html = "";
+      for (const p of procs) {
+        const isX86 = (p.arch || "").toLowerCase().includes("86") && !(p.arch || "").toLowerCase().includes("64");
+        const archClass = isX86 ? "badge-arch badge-arch-x86" : "badge-arch";
+        const statusClass = p.running ? "status-tag running" : "status-tag exited";
+        const statusDesc = p.running ? "RUNNING" : "EXITED (" + p.exit_code + ")";
+        const actionBtn = p.running
+          ? `<button class="btn-terminate" onclick="event.stopPropagation(); killProcess(${p.pid})">终止</button>`
+          : `<span style="color: var(--text-subtle); font-size: 11px;">已注销</span>`;
+
+        const isChild = typeof p.parent_pid === 'number' && p.parent_pid > 0;
+        const treePrefix = isChild ? `<span style="color: var(--text-subtle); font-family: monospace; font-size: 11px; margin-right: 4px;">└─</span>` : "";
+        const parentBadge = isChild ? `<span style="font-size: 10px; color: var(--text-subtle); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; margin-left: 6px;">父PID: ${p.parent_pid}</span>` : "";
+        const procIcon = (p.icon && p.icon.trim().length > 0)
+          ? `<img src="${p.icon}" class="proc-item-icon" alt="" onerror="this.style.display='none';" />`
+          : `<svg class="proc-item-icon-fallback" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect></svg>`;
+
+        const connCount = currentSessions.filter(s => s.pid === p.pid).length;
+        const connBadgeClass = connCount > 0 ? "badge-conn-count has-conns" : "badge-conn-count";
+        const isSelected = selectedProcessPid === p.pid;
+        const rowClass = isSelected ? "proc-row-selectable active-filter" : "proc-row-selectable";
+
+        html += `
+          <tr class="${rowClass}" data-pid="${p.pid}" data-proc-name="${escapeHtml(p.name)}" onclick="toggleProcessFilter(Number(this.dataset.pid), this.dataset.procName)" title="点击过滤该进程发起的网络连接">
+            <td>${p.pid}</td>
+            <td title="${escapeHtml(p.path)}">${treePrefix}${procIcon}<strong>${escapeHtml(p.name)}</strong>${parentBadge} <span style="font-size: 10.5px; color: var(--text-muted); margin-left: 4px;">${p.path !== p.name ? escapeHtml(p.path) : ""}</span></td>
+            <td><span class="${connBadgeClass}">${connCount} 条连接</span></td>
+            <td><span class="${archClass}">${escapeHtml(p.arch)}</span></td>
+            <td><span class="${statusClass}"><span class="status-dot" style="background: currentColor; width: 6px; height: 6px;"></span>${statusDesc}</span></td>
+            <td style="text-align: center;">${actionBtn}</td>
+          </tr>
+        `;
+      }
+      tbody.innerHTML = html;
     }
 
     function openEditPresetModal(index, event) {
@@ -2250,6 +2579,22 @@
       showToast("快捷预设已更新", "success");
     }
 
+    function onRuleTypeChange() {
+      const typeInput = document.getElementById("newRuleType");
+      const valInput = document.getElementById("newRuleVal");
+      if (!typeInput || !valInput) return;
+      const placeholders = {
+        domain_suffix: "例如: google.com 或 github.com",
+        domain_keyword: "例如: openai 或 anthropic",
+        domain_exact: "例如: api.ipify.org",
+        ip_cidr: "例如: 192.168.0.0/16 或 8.8.8.8/32",
+        port: "例如: 443 或 8080",
+        port_range: "例如: 1000-2000",
+        process_name: "例如: chrome.exe 或 curl"
+      };
+      valInput.placeholder = placeholders[typeInput.value] || "匹配表达式/值";
+    }
+
     function submitAddRule() {
       const nameInput = document.getElementById("newRuleName");
       const typeInput = document.getElementById("newRuleType");
@@ -2263,11 +2608,13 @@
 
       if (!name) {
         log("[错误] 请填写规则名称");
+        showToast("请填写规则名称", "error");
         nameInput.focus();
         return;
       }
       if (!pattern_val && pattern_type !== "final") {
         log("[错误] 请填写匹配表达式/值");
+        showToast("请填写匹配表达式/值", "error");
         valInput.focus();
         return;
       }
@@ -2276,6 +2623,7 @@
       nameInput.value = "";
       valInput.value = "";
       log("已提交新增规则: " + name);
+      showToast("已添加规则: " + name, "success");
     }
 
     function deleteRule(id) {
@@ -2289,8 +2637,19 @@
     }
 
     function setPreset(preset) {
+      const presetLabels = {
+        default: "智能分流 (局域网直连 + 其余走代理)",
+        global_proxy: "全局代理 (所有连接走代理)",
+        direct_all: "全部直连 (所有连接直连)"
+      };
+      if (currentRules && currentRules.length > 1) {
+        if (!confirm(`确定要切换为「${presetLabels[preset] || preset}」吗？\n这将会重置并覆盖当前的分流规则列表。`)) {
+          return;
+        }
+      }
       sendIpc("set_rule_preset", { preset });
       log("正在应用规则预设: " + preset);
+      showToast("已切换分流预设: " + (presetLabels[preset] || preset), "info");
     }
 
     function browseFile() {
@@ -2332,6 +2691,7 @@
         return;
       }
       pendingBrowseTarget = null;
+      hasUserEditedTarget = true;
       const pathInput = document.getElementById("targetPath");
       const argsInput = document.getElementById("targetArgs");
       if (pathInput) pathInput.value = path;
@@ -2446,55 +2806,8 @@
       }
 
       // 托管进程列表渲染
-      const tbody = document.getElementById("procTableBody");
-      const procs = state.processes || [];
-      const procBadge = document.getElementById("navProcBadge");
-      const procSummaryBadge = document.getElementById("procSummaryBadge");
-      
-      const runningCount = procs.filter(p => p.running).length;
-      if (procBadge) procBadge.innerText = runningCount;
-      if (procSummaryBadge) procSummaryBadge.innerText = `${runningCount} / ${procs.length} 个进程运行中`;
-
-      if (tbody) {
-        if (procs.length === 0) {
-          tbody.innerHTML = `
-            <tr>
-              <td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 36px 12px;">
-                暂无托管进程。进入“进程注入”或“常用快捷”启动目标程序。
-              </td>
-            </tr>
-          `;
-        } else {
-          let html = "";
-          for (const p of procs) {
-            const isX86 = (p.arch || "").toLowerCase().includes("86") && !(p.arch || "").toLowerCase().includes("64");
-            const archClass = isX86 ? "badge-arch badge-arch-x86" : "badge-arch";
-            const statusClass = p.running ? "status-tag running" : "status-tag exited";
-            const statusDesc = p.running ? "RUNNING" : "EXITED (" + p.exit_code + ")";
-            const actionBtn = p.running 
-              ? `<button class="btn-terminate" onclick="killProcess(${p.pid})">终止</button>` 
-              : `<span style="color: var(--text-subtle); font-size: 11px;">已注销</span>`;
-
-            const isChild = typeof p.parent_pid === 'number' && p.parent_pid > 0;
-            const treePrefix = isChild ? `<span style="color: var(--text-subtle); font-family: monospace; font-size: 11px; margin-right: 4px;">└─</span>` : "";
-            const parentBadge = isChild ? `<span style="font-size: 10px; color: var(--text-subtle); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; margin-left: 6px;">父PID: ${p.parent_pid}</span>` : "";
-            const procIcon = (p.icon && p.icon.trim().length > 0)
-              ? `<img src="${p.icon}" class="proc-item-icon" alt="" onerror="this.style.display='none';" />`
-              : `<svg class="proc-item-icon-fallback" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect></svg>`;
-
-            html += `
-              <tr>
-                <td>${p.pid}</td>
-                <td title="${p.path}">${treePrefix}${procIcon}<strong>${p.name}</strong>${parentBadge} <span style="font-size: 10.5px; color: var(--text-muted); margin-left: 4px;">${p.path !== p.name ? p.path : ""}</span></td>
-                <td><span class="${archClass}">${p.arch}</span></td>
-                <td><span class="${statusClass}"><span class="status-dot" style="background: currentColor; width: 6px; height: 6px;"></span>${statusDesc}</span></td>
-                <td style="text-align: center;">${actionBtn}</td>
-              </tr>
-            `;
-          }
-          tbody.innerHTML = html;
-        }
-      }
+      currentProcesses = state.processes || [];
+      renderProcesses(currentProcesses);
 
       // 常用预设列表同步
       if (Array.isArray(state.presets)) {
@@ -2503,6 +2816,14 @@
           lastPresetsJson = presetsJson;
           currentPresets = state.presets;
           renderPresets(currentPresets);
+        }
+        const pathInput = document.getElementById("targetPath");
+        const argsInput = document.getElementById("targetArgs");
+        if (!hasUserEditedTarget && pathInput && !pathInput.value.trim() && state.presets.length > 0) {
+          pathInput.value = state.presets[0].target || "";
+          if (argsInput && !argsInput.value.trim()) {
+            argsInput.value = state.presets[0].args || "";
+          }
         }
       }
 
@@ -2514,6 +2835,19 @@
 
       if (state.last_log) {
         log(state.last_log);
+        if (state.last_log !== lastNotifiedLog) {
+          const prevLog = lastNotifiedLog;
+          lastNotifiedLog = state.last_log;
+          if (prevLog !== "") {
+            if (state.last_log.startsWith("[ERR]") || state.last_log.startsWith("[错误]")) {
+              showToast(state.last_log, "error");
+            } else if (state.last_log.startsWith("[WARN]") || state.last_log.startsWith("[警告]")) {
+              showToast(state.last_log, "info");
+            } else if (state.last_log.startsWith("[INJECT]")) {
+              showToast(state.last_log, "success");
+            }
+          }
+        }
       }
     };
 
@@ -2679,6 +3013,7 @@
       const item = currentPresets[index];
       if (!item) return;
 
+      hasUserEditedTarget = true;
       const pathInput = document.getElementById("targetPath");
       const argsInput = document.getElementById("targetArgs");
       if (pathInput) pathInput.value = item.target;
@@ -2691,6 +3026,7 @@
     function fillInputsFromPreset(index) {
       const item = currentPresets[index];
       if (!item) return;
+      hasUserEditedTarget = true;
       const pathInput = document.getElementById("targetPath");
       const argsInput = document.getElementById("targetArgs");
       if (pathInput) pathInput.value = item.target;
@@ -2704,26 +3040,23 @@
       const args = document.getElementById("targetArgs").value.trim();
       if (!target) {
         log("[警告] 请先在输入框中指定或浏览目标程序可执行文件路径");
+        showToast("请先指定或浏览目标程序路径", "info");
         switchNav("view-inject");
         return;
       }
       sendIpc("add_preset", { target, args });
       switchNav("view-presets");
+      showToast("已加入快捷预设", "success");
     }
 
     function launchProcess(overrideTarget = null, overrideArgs = null) {
       let target = overrideTarget !== null ? overrideTarget : document.getElementById("targetPath").value.trim();
       let args = overrideArgs !== null ? overrideArgs : document.getElementById("targetArgs").value.trim();
       if (!target) {
-        const placeholder = document.getElementById("targetPath").placeholder;
-        if (placeholder) {
-          target = placeholder;
-          document.getElementById("targetPath").value = target;
-        } else {
-          log("[错误] 请输入或选择目标程序路径");
-          flashInput(document.getElementById("targetPath"));
-          return;
-        }
+        log("[错误] 请输入、拖入或浏览选择目标程序可执行文件 (.exe)");
+        showToast("请先输入、拖入或选择目标程序路径", "error");
+        flashInput(document.getElementById("targetPath"));
+        return;
       }
 
       const proxy = document.getElementById("upstreamProxy").value.trim();
@@ -2750,6 +3083,7 @@
     function runQuickTest() {
       const curlPath = "C:\\Windows\\System32\\curl.exe";
       const curlArgs = "https://api.ipify.org -v";
+      hasUserEditedTarget = true;
       document.getElementById("targetPath").value = curlPath;
       document.getElementById("targetArgs").value = curlArgs;
       switchNav("view-inject");
@@ -2758,7 +3092,7 @@
     }
 
     /* GitHub 版本更新检测与一键安装 */
-    let currentAppVersion = "0.2.1";
+    let currentAppVersion = "0.2.2";
     let latestReleaseData = null;
     let isDownloadingUpdate = false;
 
@@ -2945,6 +3279,24 @@
 
     window.addEventListener("DOMContentLoaded", () => {
       renderPresets();
+      onRuleTypeChange();
+
+      const targetPathInput = document.getElementById("targetPath");
+      const targetArgsInput = document.getElementById("targetArgs");
+      if (targetPathInput) {
+        targetPathInput.addEventListener("input", () => { hasUserEditedTarget = true; });
+      }
+      if (targetArgsInput) {
+        targetArgsInput.addEventListener("input", () => { hasUserEditedTarget = true; });
+      }
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          closeAttachModal();
+          closeEditPresetModal();
+          closeUpdateModal();
+        }
+      });
 
       const upstreamInput = document.getElementById("upstreamProxy");
       const strictDnsInput = document.getElementById("strictDns");
