@@ -29,8 +29,8 @@ Download the latest version from [GitHub Releases](https://github.com/jnnmia/sha
 
 | Package | Filename | Description |
 |---|---|---|
-| Installer | `ShadowProxy-Setup-v0.2.2.exe` | Standalone setup wizard; configures Desktop/Start Menu shortcuts and uninstaller |
-| Portable | `ShadowProxy-v0.2.2-windows-portable.zip` | Standalone archive; extract and double-click `start-gui.bat` to run |
+| Installer | `ShadowProxy-Setup-v0.2.3.exe` | Standalone setup wizard; configures Desktop/Start Menu shortcuts and uninstaller |
+| Portable | `ShadowProxy-v0.2.3-windows-portable.zip` | Standalone archive; extract and double-click `start-gui.bat` to run |
 
 ---
 
