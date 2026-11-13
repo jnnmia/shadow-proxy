@@ -1175,10 +1175,14 @@
       gap: 5px;
       transition: all 0.2s ease;
     }
-    .btn-check-update:hover {
+    .btn-check-update:hover:not(:disabled) {
       background: var(--bg-surface-elevated);
       color: var(--cyan-neon);
       border-color: rgba(57, 197, 187, 0.4);
+    }
+    .btn-check-update:disabled {
+      opacity: 0.65;
+      cursor: wait;
     }
     .spinning {
       animation: spin 0.8s linear infinite;
@@ -1427,7 +1431,7 @@
             <svg id="iconCheckUpdate" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
               <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
             </svg>
-            <span>检查更新</span>
+            <span id="checkUpdateText">检查更新</span>
           </button>
         </div>
       </div>
@@ -3125,6 +3129,17 @@
     }
 
     let updateCheckTimer = null;
+    let isCheckingUpdate = false;
+    let pendingManualUpdateCheck = false;
+
+    function resetUpdateBtnState() {
+      const icon = document.getElementById("iconCheckUpdate");
+      const btn = document.getElementById("btnCheckUpdate");
+      const textEl = document.getElementById("checkUpdateText");
+      if (icon) icon.classList.remove("spinning");
+      if (btn) btn.disabled = false;
+      if (textEl) textEl.innerText = "检查更新";
+    }
 
     function checkUpdate(silent = false) {
       if (silent) {
@@ -3132,34 +3147,51 @@
         if (Date.now() - lastCheck < 4 * 3600 * 1000) {
           return;
         }
+      } else {
+        pendingManualUpdateCheck = true;
+        log("[UPDATE] 正在检查 GitHub 最新版本...");
       }
 
       const icon = document.getElementById("iconCheckUpdate");
       const btn = document.getElementById("btnCheckUpdate");
+      const textEl = document.getElementById("checkUpdateText");
       if (icon) icon.classList.add("spinning");
       if (btn) btn.disabled = true;
+      if (textEl && !silent) textEl.innerText = "检查中...";
+
+      if (isCheckingUpdate) {
+        return;
+      }
+      isCheckingUpdate = true;
 
       if (updateCheckTimer) clearTimeout(updateCheckTimer);
       updateCheckTimer = setTimeout(() => {
-        if (icon) icon.classList.remove("spinning");
-        if (btn) btn.disabled = false;
-      }, 20000);
+        isCheckingUpdate = false;
+        const wasManual = pendingManualUpdateCheck;
+        pendingManualUpdateCheck = false;
+        resetUpdateBtnState();
+        if (wasManual) {
+          log("[UPDATE] 检查更新超时，请检查网络或上游代理配置");
+          showToast("检查更新超时，请检查网络或上游代理配置", "error");
+        }
+      }, 30000);
 
       sendIpc("check_update", { silent });
     }
 
     window.onUpdateCheckResult = function(res) {
-      const icon = document.getElementById("iconCheckUpdate");
-      const btn = document.getElementById("btnCheckUpdate");
-      if (icon) icon.classList.remove("spinning");
-      if (btn) btn.disabled = false;
+      isCheckingUpdate = false;
+      resetUpdateBtnState();
       if (updateCheckTimer) {
         clearTimeout(updateCheckTimer);
         updateCheckTimer = null;
       }
 
+      const wasManual = pendingManualUpdateCheck;
+      pendingManualUpdateCheck = false;
+
       if (!res) return;
-      const silent = !!res.silent;
+      const silent = !!res.silent && !wasManual;
 
       if (!res.success) {
         const errMsg = res.error || "网络连接异常";

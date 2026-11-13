@@ -1232,19 +1232,45 @@ fn format_curl_proxy(proxy_str: &str) -> Option<String> {
     }
 }
 
+fn is_proxy_tcp_reachable(proxy_str: &str) -> bool {
+    let trimmed = proxy_str.trim();
+    let host_port = trimmed
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .trim_start_matches("socks5://")
+        .trim_start_matches("socks5h://")
+        .split('/')
+        .next()
+        .unwrap_or("");
+    if host_port.is_empty() {
+        return false;
+    }
+    use std::net::ToSocketAddrs;
+    if let Ok(addrs) = host_port.to_socket_addrs() {
+        for addr in addrs {
+            if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).is_ok() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn check_github_update(upstream_proxy: &str) -> Result<serde_json::Value, String> {
     let proxy_arg = format_curl_proxy(upstream_proxy);
+    let proxy_reachable = !upstream_proxy.trim().is_empty() && is_proxy_tcp_reachable(upstream_proxy);
 
     let run_curl_api = |proxy: Option<&str>| -> Result<serde_json::Value, String> {
         use std::os::windows::process::CommandExt;
         let mut cmd = std::process::Command::new("curl.exe");
         cmd.args([
-            "-s",
+            "-sS",
             "--fail",
+            "--ssl-no-revoke",
             "--connect-timeout",
-            "8",
+            "4",
             "--max-time",
-            "15",
+            "8",
             "-H",
             "Accept: application/vnd.github.v3+json",
             "-H",
@@ -1258,7 +1284,12 @@ fn check_github_update(upstream_proxy: &str) -> Result<serde_json::Value, String
 
         let output = cmd.output().map_err(|e| format!("执行 curl 失败: {}", e))?;
         if !output.status.success() {
-            return Err(format!("curl 退出代码: {:?}", output.status.code()));
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                format!("curl 退出代码: {:?}", output.status.code())
+            } else {
+                stderr
+            });
         }
         let text = String::from_utf8_lossy(&output.stdout);
         serde_json::from_str::<serde_json::Value>(&text)
@@ -1269,12 +1300,13 @@ fn check_github_update(upstream_proxy: &str) -> Result<serde_json::Value, String
         use std::os::windows::process::CommandExt;
         let mut cmd = std::process::Command::new("curl.exe");
         cmd.args([
-            "-s",
+            "-sS",
             "-I",
+            "--ssl-no-revoke",
             "--connect-timeout",
-            "8",
+            "4",
             "--max-time",
-            "15",
+            "8",
             "-H",
             "User-Agent: ShadowProxy-App",
         ]);
@@ -1285,6 +1317,14 @@ fn check_github_update(upstream_proxy: &str) -> Result<serde_json::Value, String
         cmd.creation_flags(0x08000000);
 
         let output = cmd.output().map_err(|e| format!("执行 curl 失败: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                format!("curl 退出代码: {:?}", output.status.code())
+            } else {
+                stderr
+            });
+        }
         let headers = String::from_utf8_lossy(&output.stdout);
         for line in headers.lines() {
             let lower = line.to_ascii_lowercase();
@@ -1319,39 +1359,43 @@ fn check_github_update(upstream_proxy: &str) -> Result<serde_json::Value, String
         Err("未能从 GitHub Releases 重定向解析出最新版本".to_string())
     };
 
-    if let Some(ref p) = proxy_arg {
-        if let Ok(val) = run_curl_api(Some(p)) {
-            return Ok(val);
-        }
-        if p.starts_with("socks5h://") {
-            let http_proxy = format!("http://{}", p.trim_start_matches("socks5h://"));
-            if let Ok(val) = run_curl_api(Some(&http_proxy)) {
-                return Ok(val);
+    let mut last_err = String::new();
+
+    if proxy_reachable {
+        if let Some(ref p) = proxy_arg {
+            match run_curl_api(Some(p)) {
+                Ok(val) => return Ok(val),
+                Err(e) => last_err = e,
+            }
+            if p.starts_with("socks5h://") {
+                let http_proxy = format!("http://{}", p.trim_start_matches("socks5h://"));
+                match run_curl_api(Some(&http_proxy)) {
+                    Ok(val) => return Ok(val),
+                    Err(e) => last_err = e,
+                }
+            }
+            match run_curl_redirect(Some(p)) {
+                Ok(val) => return Ok(val),
+                Err(e) => last_err = e,
             }
         }
     }
 
-    if let Ok(val) = run_curl_api(None) {
-        return Ok(val);
+    match run_curl_api(None) {
+        Ok(val) => return Ok(val),
+        Err(e) => last_err = e,
     }
 
-    if let Some(ref p) = proxy_arg {
-        if let Ok(val) = run_curl_redirect(Some(p)) {
-            return Ok(val);
-        }
-        if p.starts_with("socks5h://") {
-            let http_proxy = format!("http://{}", p.trim_start_matches("socks5h://"));
-            if let Ok(val) = run_curl_redirect(Some(&http_proxy)) {
-                return Ok(val);
-            }
-        }
+    match run_curl_redirect(None) {
+        Ok(val) => return Ok(val),
+        Err(e) => last_err = e,
     }
 
-    if let Ok(val) = run_curl_redirect(None) {
-        return Ok(val);
+    if last_err.is_empty() {
+        Err("无法连接至 GitHub 获取更新，请检查网络或上游代理配置".to_string())
+    } else {
+        Err(format!("无法连接至 GitHub ({})", last_err))
     }
-
-    Err("无法连接至 GitHub 获取更新，请检查网络或上游代理配置".to_string())
 }
 
 fn resolve_hook_dll(arch: Architecture) -> anyhow::Result<PathBuf> {
@@ -2238,6 +2282,7 @@ fn run_app() -> anyhow::Result<()> {
                                                     "--fail",
                                                     "--silent",
                                                     "--show-error",
+                                                    "--ssl-no-revoke",
                                                     "--connect-timeout",
                                                     "15",
                                                     "--max-time",
