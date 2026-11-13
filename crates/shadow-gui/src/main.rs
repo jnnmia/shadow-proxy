@@ -1719,6 +1719,7 @@ fn run_app() -> anyhow::Result<()> {
     log_step("5. WebViewBuilder built successfully");
 
     let mut state = AppState::new()?;
+    let mut has_auto_started_relay = false;
     log_step("6. AppState created, starting tick thread and event loop");
 
     // 250ms 保底唤醒显示窗口（防止极端异常下未能触发 window_ready 导致窗口不可见）
