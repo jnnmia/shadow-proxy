@@ -91,17 +91,15 @@ fn init_env_config() {
     }
 
     // 运行时动态附加 (Runtime Attach) 的进程未继承主控环境变量，回退读取共享状态文件并注入当前环境以供后续子进程继承
-    if !has_env_port {
-        if let Some((port, strict_dns)) = read_shared_relay_state() {
-            winsock_hook::RELAY_PORT.store(port, Ordering::Relaxed);
-            winsock_hook::STRICT_DNS.store(strict_dns, Ordering::Relaxed);
-            let port_str = port.to_string();
-            let dns_str = if strict_dns { "1" } else { "0" };
-            std::env::set_var("SHADOW_RELAY_PORT", &port_str);
-            std::env::set_var("GHOST_RELAY_PORT", &port_str);
-            std::env::set_var("SHADOW_STRICT_DNS", dns_str);
-            std::env::set_var("GHOST_STRICT_DNS", dns_str);
-        }
+    if let Some((port, strict_dns)) = (!has_env_port).then(read_shared_relay_state).flatten() {
+        winsock_hook::RELAY_PORT.store(port, Ordering::Relaxed);
+        winsock_hook::STRICT_DNS.store(strict_dns, Ordering::Relaxed);
+        let port_str = port.to_string();
+        let dns_str = if strict_dns { "1" } else { "0" };
+        std::env::set_var("SHADOW_RELAY_PORT", &port_str);
+        std::env::set_var("GHOST_RELAY_PORT", &port_str);
+        std::env::set_var("SHADOW_STRICT_DNS", dns_str);
+        std::env::set_var("GHOST_STRICT_DNS", dns_str);
     }
 }
 
