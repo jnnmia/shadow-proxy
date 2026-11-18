@@ -58,10 +58,10 @@ pub fn parse_relay_state_str(content: &str) -> Option<(u16, bool)> {
     if port == 0 {
         return None;
     }
-    let strict_dns = match parts.next().map(|s| s.trim()) {
-        Some("0") | Some("false") | Some("FALSE") => false,
-        _ => true,
-    };
+    let strict_dns = !matches!(
+        parts.next().map(|s| s.trim()),
+        Some("0" | "false" | "FALSE")
+    );
     Some((port, strict_dns))
 }
 

@@ -1361,23 +1361,21 @@ fn check_github_update(upstream_proxy: &str) -> Result<serde_json::Value, String
 
     let mut last_err = String::new();
 
-    if proxy_reachable {
-        if let Some(ref p) = proxy_arg {
-            match run_curl_api(Some(p)) {
+    if let Some(p) = proxy_arg.as_ref().filter(|_| proxy_reachable) {
+        match run_curl_api(Some(p)) {
+            Ok(val) => return Ok(val),
+            Err(e) => last_err = e,
+        }
+        if p.starts_with("socks5h://") {
+            let http_proxy = format!("http://{}", p.trim_start_matches("socks5h://"));
+            match run_curl_api(Some(&http_proxy)) {
                 Ok(val) => return Ok(val),
                 Err(e) => last_err = e,
             }
-            if p.starts_with("socks5h://") {
-                let http_proxy = format!("http://{}", p.trim_start_matches("socks5h://"));
-                match run_curl_api(Some(&http_proxy)) {
-                    Ok(val) => return Ok(val),
-                    Err(e) => last_err = e,
-                }
-            }
-            match run_curl_redirect(Some(p)) {
-                Ok(val) => return Ok(val),
-                Err(e) => last_err = e,
-            }
+        }
+        match run_curl_redirect(Some(p)) {
+            Ok(val) => return Ok(val),
+            Err(e) => last_err = e,
         }
     }
 
