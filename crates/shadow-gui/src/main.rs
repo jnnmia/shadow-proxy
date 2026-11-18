@@ -1364,40 +1364,49 @@ fn check_github_update(upstream_proxy: &str) -> Result<serde_json::Value, String
         Err("未能从 GitHub Releases 重定向解析出最新版本".to_string())
     };
 
-    let mut last_err = String::new();
+    let mut first_err: Option<String> = None;
 
     if let Some(p) = proxy_arg.as_ref().filter(|_| proxy_reachable) {
         match run_curl_api(Some(p)) {
             Ok(val) => return Ok(val),
-            Err(e) => last_err = e,
+            Err(e) => {
+                first_err.get_or_insert(e);
+            }
         }
         if p.starts_with("socks5h://") {
             let http_proxy = format!("http://{}", p.trim_start_matches("socks5h://"));
             match run_curl_api(Some(&http_proxy)) {
                 Ok(val) => return Ok(val),
-                Err(e) => last_err = e,
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                }
             }
         }
         match run_curl_redirect(Some(p)) {
             Ok(val) => return Ok(val),
-            Err(e) => last_err = e,
+            Err(e) => {
+                first_err.get_or_insert(e);
+            }
         }
     }
 
     match run_curl_api(None) {
         Ok(val) => return Ok(val),
-        Err(e) => last_err = e,
+        Err(e) => {
+            first_err.get_or_insert(e);
+        }
     }
 
     match run_curl_redirect(None) {
         Ok(val) => return Ok(val),
-        Err(e) => last_err = e,
+        Err(e) => {
+            first_err.get_or_insert(e);
+        }
     }
 
-    if last_err.is_empty() {
-        Err("无法连接至 GitHub 获取更新，请检查网络或上游代理配置".to_string())
-    } else {
-        Err(format!("无法连接至 GitHub ({})", last_err))
+    match first_err {
+        Some(err) if !err.is_empty() => Err(format!("无法连接至 GitHub ({})", err)),
+        _ => Err("无法连接至 GitHub 获取更新，请检查网络或上游代理配置".to_string()),
     }
 }
 
