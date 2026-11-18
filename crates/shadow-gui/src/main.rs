@@ -523,6 +523,11 @@ impl AppState {
         std::env::set_var("GHOST_RELAY_PORT", &port_str);
         std::env::set_var("SHADOW_STRICT_DNS", dns_flag);
         std::env::set_var("GHOST_STRICT_DNS", dns_flag);
+        if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+            let dir = Path::new(&appdata).join("ShadowProxy");
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(dir.join("relay.state"), format!("{},{}", port_str, dns_flag));
+        }
 
         // 4. 前置同步快速探活 (800ms) 决定启动初始健康状态，彻底杜绝虚假 ONLINE
         let initial_probe = self.rt.block_on(async {

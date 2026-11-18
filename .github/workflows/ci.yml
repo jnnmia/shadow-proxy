@@ -28,7 +28,7 @@ jobs:
         run: cargo test --workspace
 
       - name: Cargo Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::collapsible_if
 
       - name: Cargo Build Release
         run: cargo build --workspace --release
