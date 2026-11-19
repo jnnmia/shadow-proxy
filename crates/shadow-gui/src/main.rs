@@ -119,6 +119,10 @@ enum IpcCommand {
     DownloadAndInstall { url: String, filename: String },
     #[serde(rename = "check_update")]
     CheckUpdate { silent: bool },
+    #[serde(rename = "set_close_action")]
+    SetCloseAction { action: String },
+    #[serde(rename = "confirm_close_action")]
+    ConfirmCloseAction { action: String, remember: bool },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -182,6 +186,7 @@ struct FullState {
     relay_addr: Option<String>,
     upstream_proxy: String,
     strict_dns: bool,
+    close_action: String,
     bytes_sent: u64,
     bytes_received: u64,
     speed_up_bps: u64,
@@ -220,10 +225,24 @@ fn config_file_path() -> Option<PathBuf> {
     })
 }
 
+fn default_close_action() -> String {
+    "ask".to_string()
+}
+
+fn normalize_close_action(action: &str) -> String {
+    match action.trim() {
+        "minimize" => "minimize".to_string(),
+        "exit" => "exit".to_string(),
+        _ => "ask".to_string(),
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct AppConfig {
     upstream_proxy: String,
     strict_dns: bool,
+    #[serde(default = "default_close_action")]
+    close_action: String,
 }
 
 impl Default for AppConfig {
@@ -231,6 +250,7 @@ impl Default for AppConfig {
         Self {
             upstream_proxy: "127.0.0.1:7897".to_string(),
             strict_dns: true,
+            close_action: default_close_action(),
         }
     }
 }
@@ -241,6 +261,7 @@ struct AppState {
     relay_port: Option<u16>,
     upstream_proxy: String,
     strict_dns: bool,
+    close_action: String,
     processes: Vec<TrackedProcess>,
     presets: Vec<PresetItem>,
     router: Arc<RwLock<Router>>,
@@ -426,6 +447,7 @@ impl AppState {
             let cfg = AppConfig {
                 upstream_proxy: self.upstream_proxy.clone(),
                 strict_dns: self.strict_dns,
+                close_action: self.close_action.clone(),
             };
             if let Ok(json) = serde_json::to_string_pretty(&cfg) {
                 let tmp_path = path.with_extension("json.tmp");
@@ -451,6 +473,7 @@ impl AppState {
             relay_port: None,
             upstream_proxy: cfg.upstream_proxy,
             strict_dns: cfg.strict_dns,
+            close_action: normalize_close_action(&cfg.close_action),
             processes: Vec::new(),
             presets,
             router,
@@ -1100,6 +1123,7 @@ impl AppState {
             relay_addr: self.relay.as_ref().map(|r| r.local_addr.to_string()),
             upstream_proxy: self.upstream_proxy.clone(),
             strict_dns: self.strict_dns,
+            close_action: self.close_action.clone(),
             bytes_sent,
             bytes_received,
             speed_up_bps,
@@ -2386,6 +2410,48 @@ fn run_app() -> anyhow::Result<()> {
                                     }
                                 });
                             }
+                            IpcCommand::SetCloseAction { action } => {
+                                let normalized = normalize_close_action(&action);
+                                state.close_action = normalized.clone();
+                                state.save_config();
+                                let label = match normalized.as_str() {
+                                    "minimize" => "最小化到系统托盘",
+                                    "exit" => "直接退出程序",
+                                    _ => "每次询问",
+                                };
+                                state.last_log = Some(format!("[SYS] 关闭窗口行为已更新为: {}", label));
+                                let full = state.get_full_state();
+                                if let Ok(json) = serde_json::to_string(&full) {
+                                    let _ = webview.evaluate_script(&format!(
+                                        "window.updateState({});",
+                                        json
+                                    ));
+                                }
+                            }
+                            IpcCommand::ConfirmCloseAction { action, remember } => {
+                                let chosen = if action.trim() == "exit" {
+                                    "exit"
+                                } else {
+                                    "minimize"
+                                };
+                                if remember {
+                                    state.close_action = chosen.to_string();
+                                    state.save_config();
+                                }
+                                if chosen == "exit" {
+                                    let _ = proxy.send_event(UserEvent::TrayExit);
+                                } else {
+                                    window.set_visible(false);
+                                    state.last_log = Some("[SYS] 窗口已最小化至系统托盘常驻运行".to_string());
+                                    let full = state.get_full_state();
+                                    if let Ok(json) = serde_json::to_string(&full) {
+                                        let _ = webview.evaluate_script(&format!(
+                                            "window.updateState({});",
+                                            json
+                                        ));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -2475,14 +2541,26 @@ fn run_app() -> anyhow::Result<()> {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
-                window.set_visible(false);
-                state.last_log = Some("[SYS] 窗口已最小化至系统托盘常驻运行".to_string());
-                let full = state.get_full_state();
-                if let Ok(json) = serde_json::to_string(&full) {
-                    let _ = webview.evaluate_script(&format!(
-                        "window.updateState({});",
-                        json
-                    ));
+                match state.close_action.as_str() {
+                    "exit" => {
+                        let _ = proxy.send_event(UserEvent::TrayExit);
+                    }
+                    "minimize" => {
+                        window.set_visible(false);
+                        state.last_log = Some("[SYS] 窗口已最小化至系统托盘常驻运行".to_string());
+                        let full = state.get_full_state();
+                        if let Ok(json) = serde_json::to_string(&full) {
+                            let _ = webview.evaluate_script(&format!(
+                                "window.updateState({});",
+                                json
+                            ));
+                        }
+                    }
+                    _ => {
+                        let _ = webview.evaluate_script(
+                            "if (window.openCloseConfirmModal) { window.openCloseConfirmModal(); }",
+                        );
+                    }
                 }
             }
             _ => {}
@@ -2593,10 +2671,18 @@ mod tests {
         let cfg = AppConfig {
             upstream_proxy: "127.0.0.1:10808".to_string(),
             strict_dns: true,
+            close_action: "minimize".to_string(),
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let loaded: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded.upstream_proxy, "127.0.0.1:10808");
         assert!(loaded.strict_dns);
+        assert_eq!(loaded.close_action, "minimize");
+
+        // 兼容旧版 config.json（无 close_action 字段时默认回退为 "ask"）
+        let legacy: AppConfig =
+            serde_json::from_str(r#"{"upstream_proxy":"127.0.0.1:7897","strict_dns":false}"#)
+                .unwrap();
+        assert_eq!(legacy.close_action, "ask");
     }
 }

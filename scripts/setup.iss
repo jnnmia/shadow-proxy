@@ -1,6 +1,6 @@
 ; ShadowProxy Inno Setup 脚本
 #define MyAppName "ShadowProxy"
-#define MyAppVersion "0.2.4"
+#define MyAppVersion "0.2.5"
 #define MyAppPublisher "ShadowProxy Team"
 #define MyAppURL "https://github.com/jnnmia/shadow-proxy"
 #define MyAppExeName "bin\shadow-gui.exe"
