@@ -2420,6 +2420,22 @@ fn run_app() -> anyhow::Result<()> {
                     error,
                     data,
                 } => {
+                    if !silent {
+                        if success {
+                            let tag = data
+                                .as_ref()
+                                .and_then(|d| d.get("tag_name").or_else(|| d.get("name")))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            state.last_log = Some(format!(
+                                "[UPDATE] 检查更新完成，远端最新版本: {} (当前: v{})",
+                                if tag.is_empty() { "未知" } else { tag },
+                                env!("CARGO_PKG_VERSION")
+                            ));
+                        } else if let Some(ref err) = error {
+                            state.last_log = Some(format!("[UPDATE] 检查更新失败: {}", err));
+                        }
+                    }
                     let res_obj = serde_json::json!({
                         "silent": silent,
                         "success": success,

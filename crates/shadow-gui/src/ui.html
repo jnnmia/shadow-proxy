@@ -3131,6 +3131,25 @@
     let updateCheckTimer = null;
     let isCheckingUpdate = false;
     let pendingManualUpdateCheck = false;
+    let lastUpdateCheckTs = 0;
+
+    function safeStorageGet(key) {
+      try {
+        return window.localStorage ? window.localStorage.getItem(key) : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function safeStorageSet(key, val) {
+      try {
+        if (window.localStorage) {
+          window.localStorage.setItem(key, val);
+        }
+      } catch (_) {
+        // WebView2 NavigateToString (about:blank) 下 localStorage 为不透明源，忽略安全异常
+      }
+    }
 
     function resetUpdateBtnState() {
       const icon = document.getElementById("iconCheckUpdate");
@@ -3143,7 +3162,8 @@
 
     function checkUpdate(silent = false) {
       if (silent) {
-        const lastCheck = parseInt(localStorage.getItem("shadow_last_update_check") || "0", 10);
+        const storedTs = parseInt(safeStorageGet("shadow_last_update_check") || "0", 10) || 0;
+        const lastCheck = Math.max(storedTs, lastUpdateCheckTs);
         if (Date.now() - lastCheck < 4 * 3600 * 1000) {
           return;
         }
@@ -3193,37 +3213,50 @@
       if (!res) return;
       const silent = !!res.silent && !wasManual;
 
-      if (!res.success) {
-        const errMsg = res.error || "网络连接异常";
-        log("[UPDATE] 检查更新失败: " + errMsg);
-        if (!silent) {
-          showToast("检查更新失败: " + errMsg, "error");
+      try {
+        if (!res.success) {
+          const errMsg = res.error || "网络连接异常";
+          log("[UPDATE] 检查更新失败: " + errMsg);
+          if (!silent) {
+            showToast("检查更新失败: " + errMsg, "error");
+          }
+          return;
         }
-        return;
-      }
 
-      localStorage.setItem("shadow_last_update_check", String(Date.now()));
-      const data = res.data;
-      if (!data) return;
+        lastUpdateCheckTs = Date.now();
+        safeStorageSet("shadow_last_update_check", String(lastUpdateCheckTs));
+        const data = res.data;
+        if (!data) {
+          if (!silent) {
+            showToast("未获取到版本信息，请稍后重试", "error");
+          }
+          return;
+        }
 
-      const remoteVersion = data.tag_name || data.name || "";
-      const hasUpdate = compareVersions(remoteVersion, currentAppVersion) > 0;
-      const badgeDot = document.getElementById("updateBadgeDot");
+        const remoteVersion = data.tag_name || data.name || "";
+        const hasUpdate = compareVersions(remoteVersion, currentAppVersion) > 0;
+        const badgeDot = document.getElementById("updateBadgeDot");
 
-      if (hasUpdate) {
-        latestReleaseData = data;
-        if (badgeDot) badgeDot.style.display = "inline-block";
-        log("[UPDATE] 发现新版本: " + remoteVersion + " (当前: v" + currentAppVersion + ")");
-        if (!silent) {
-          showUpdateModal(data);
+        if (hasUpdate) {
+          latestReleaseData = data;
+          if (badgeDot) badgeDot.style.display = "inline-block";
+          log("[UPDATE] 发现新版本: " + remoteVersion + " (当前: v" + currentAppVersion + ")");
+          if (!silent) {
+            showUpdateModal(data);
+          } else {
+            showToast("发现新版本 " + remoteVersion + "，可前往检查更新", "info");
+          }
         } else {
-          showToast("发现新版本 " + remoteVersion + "，可前往检查更新", "info");
+          if (badgeDot) badgeDot.style.display = "none";
+          log("[UPDATE] 当前已是最新版本 (v" + currentAppVersion + ")");
+          if (!silent) {
+            showToast("当前已是最新版本 (v" + currentAppVersion + ")", "success");
+          }
         }
-      } else {
-        if (badgeDot) badgeDot.style.display = "none";
-        log("[UPDATE] 当前已是最新版本 (v" + currentAppVersion + ")");
+      } catch (err) {
+        log("[UPDATE] 处理更新结果异常: " + (err && err.message ? err.message : String(err)));
         if (!silent) {
-          showToast("当前已是最新版本 (v" + currentAppVersion + ")", "success");
+          showToast("检查更新处理异常: " + (err && err.message ? err.message : String(err)), "error");
         }
       }
     };
